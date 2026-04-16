@@ -58,6 +58,7 @@ export interface ParseError {
 export interface TableLayout {
   x: number;
   y: number;
+  hidden?: boolean;
 }
 
 export interface GroupLayout {
@@ -81,11 +82,14 @@ export interface Layout {
 
 /* ----- Protocol: Host → Webview ----- */
 
+export type ViewportCommand = 'zoomIn' | 'zoomOut' | 'resetView' | 'fitToContent';
+
 export type HostToWebview =
   | { type: 'schema:update'; payload: { schema: Schema; parseError: ParseError | null } }
   | { type: 'layout:loaded'; payload: Layout }
   | { type: 'layout:external-change'; payload: Layout }
-  | { type: 'theme:change'; payload: { kind: 'light' | 'dark' } };
+  | { type: 'theme:change'; payload: { kind: 'light' | 'dark' } }
+  | { type: 'viewport:command'; payload: { action: ViewportCommand } };
 
 /* ----- Protocol: Webview → Host ----- */
 

@@ -1,15 +1,17 @@
 import { createStore } from 'zustand/vanilla';
 import { useSyncExternalStore } from 'preact/compat';
-import type { Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout } from '../../shared/types';
+import type { GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout } from '../../shared/types';
 
 export interface AppState {
   schema: Schema;
   parseError: ParseError | null;
   positions: Map<QualifiedName, { x: number; y: number }>;
+  hiddenTables: Set<QualifiedName>;
   groups: Record<string, { collapsed: boolean; hidden: boolean; color?: string }>;
   viewport: ViewportLayout;
   theme: 'light' | 'dark';
   ready: boolean;
+  selection: Set<QualifiedName>;
 }
 
 export interface AppActions {
@@ -19,16 +21,22 @@ export interface AppActions {
   setViewport(vp: Partial<ViewportLayout>): void;
   setTheme(kind: 'light' | 'dark'): void;
   setPositionsBatch(entries: Array<[QualifiedName, { x: number; y: number }]>): void;
+  setGroup(name: string, patch: Partial<GroupLayout>): void;
+  setTableHidden(name: QualifiedName, hidden: boolean): void;
+  setSelection(names: Iterable<QualifiedName>): void;
+  clearSelection(): void;
 }
 
 const initial: AppState = {
   schema: { tables: [], refs: [], groups: [] },
   parseError: null,
   positions: new Map(),
+  hiddenTables: new Set(),
   groups: {},
   viewport: { x: 0, y: 0, zoom: 1 },
   theme: 'light',
   ready: false,
+  selection: new Set(),
 };
 
 export const store = createStore<AppState & AppActions>((set, _get) => ({
@@ -38,10 +46,12 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   setLayout(layout) {
     const positions = new Map<QualifiedName, { x: number; y: number }>();
+    const hiddenTables = new Set<QualifiedName>();
     for (const [name, pos] of Object.entries(layout.tables)) {
       positions.set(name, { x: pos.x, y: pos.y });
+      if (pos.hidden) hiddenTables.add(name);
     }
-    set({ positions, groups: { ...layout.groups }, viewport: { ...layout.viewport } });
+    set({ positions, hiddenTables, groups: { ...layout.groups }, viewport: { ...layout.viewport } });
   },
   setTablePos(name, x, y) {
     set((s) => {
@@ -63,6 +73,29 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   setTheme(kind) {
     set({ theme: kind });
   },
+  setGroup(name, patch) {
+    set((s) => {
+      const existing = s.groups[name] ?? {};
+      const merged: GroupLayout = { ...existing, ...patch };
+      if (merged.collapsed === false) delete merged.collapsed;
+      if (merged.hidden === false) delete merged.hidden;
+      if (merged.color === '') delete merged.color;
+      return { groups: { ...s.groups, [name]: merged } };
+    });
+  },
+  setTableHidden(name, hidden) {
+    set((s) => {
+      const next = new Set(s.hiddenTables);
+      if (hidden) next.add(name); else next.delete(name);
+      return { hiddenTables: next };
+    });
+  },
+  setSelection(names) {
+    set({ selection: new Set(names) });
+  },
+  clearSelection() {
+    set({ selection: new Set() });
+  },
 }));
 
 export function useAppStore<T>(selector: (state: AppState & AppActions) => T): T {
@@ -73,8 +106,15 @@ export function useAppStore<T>(selector: (state: AppState & AppActions) => T): T
   );
 }
 
-export function toTableLayoutRecord(positions: Map<QualifiedName, { x: number; y: number }>): Record<QualifiedName, TableLayout> {
+export function toTableLayoutRecord(
+  positions: Map<QualifiedName, { x: number; y: number }>,
+  hiddenTables: Set<QualifiedName>,
+): Record<QualifiedName, TableLayout> {
   const out: Record<QualifiedName, TableLayout> = {};
-  for (const [name, pos] of positions) out[name] = { x: Math.round(pos.x), y: Math.round(pos.y) };
+  for (const [name, pos] of positions) {
+    const entry: TableLayout = { x: Math.round(pos.x), y: Math.round(pos.y) };
+    if (hiddenTables.has(name)) entry.hidden = true;
+    out[name] = entry;
+  }
   return out;
 }

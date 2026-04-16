@@ -24,14 +24,27 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
   const pos = state.positions.get(tableName);
   if (!pos) return;
 
+  // Multi-drag: if this table is in the current selection (size >= 2), drag all selected.
+  const selectionNames: string[] = state.selection.has(tableName) && state.selection.size > 1
+    ? Array.from(state.selection)
+    : [tableName];
+  if (!state.selection.has(tableName)) {
+    // Clicking an unselected table clears selection so the user isn't confused about what's dragging.
+    state.clearSelection();
+  }
+
+  const origins = new Map<string, { x: number; y: number }>();
+  for (const n of selectionNames) {
+    const p = state.positions.get(n);
+    if (p) origins.set(n, { x: p.x, y: p.y });
+  }
+
   active = true;
   e.stopPropagation();
   e.preventDefault();
 
   const pointerStartX = e.clientX;
   const pointerStartY = e.clientY;
-  const originX = pos.x;
-  const originY = pos.y;
 
   node.style.willChange = 'transform';
   try { node.setPointerCapture(e.pointerId); } catch { /* noop */ }
@@ -41,10 +54,17 @@ export function startDrag(e: PointerEvent, tableName: string, node: HTMLElement)
     const currentZoom = store.getState().viewport.zoom;
     const dx = (ev.clientX - pointerStartX) / currentZoom;
     const dy = (ev.clientY - pointerStartY) / currentZoom;
-    const nx = Math.round(originX + dx);
-    const ny = Math.round(originY + dy);
-    node.style.transform = `translate3d(${nx}px, ${ny}px, 0)`;
-    store.getState().setTablePos(tableName, nx, ny);
+    const entries: Array<[string, { x: number; y: number }]> = [];
+    for (const [n, o] of origins) {
+      const nx = Math.round(o.x + dx);
+      const ny = Math.round(o.y + dy);
+      entries.push([n, { x: nx, y: ny }]);
+      // Directly mutate the primary node for zero-latency feedback on the dragged one.
+      if (n === tableName) {
+        node.style.transform = `translate3d(${nx}px, ${ny}px, 0)`;
+      }
+    }
+    store.getState().setPositionsBatch(entries);
   };
 
   const onUp = (ev: PointerEvent) => {
@@ -71,7 +91,7 @@ export function schedulePersist(): void {
     postToHost({
       type: 'layout:persist',
       payload: {
-        tables: toTableLayoutRecord(state.positions),
+        tables: toTableLayoutRecord(state.positions, state.hiddenTables),
         groups: state.groups,
         viewport: state.viewport,
         version: 1,

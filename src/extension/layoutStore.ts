@@ -61,7 +61,9 @@ function toTables(raw: unknown): Record<string, TableLayout> {
   for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!v || typeof v !== 'object') continue;
     const vv = v as Record<string, unknown>;
-    out[k] = { x: numeric(vv.x, 0, true), y: numeric(vv.y, 0, true) };
+    const entry: TableLayout = { x: numeric(vv.x, 0, true), y: numeric(vv.y, 0, true) };
+    if (vv.hidden === true) entry.hidden = true;
+    out[k] = entry;
   }
   return out;
 }
@@ -111,7 +113,9 @@ export function serializeLayout(layout: Layout): string {
   tableKeys.forEach((k, i) => {
     const v = layout.tables[k]!;
     const comma = i < tableKeys.length - 1 ? ',' : '';
-    lines.push(`    ${JSON.stringify(k)}: { "x": ${Math.round(v.x)}, "y": ${Math.round(v.y)} }${comma}`);
+    const parts = [`"x": ${Math.round(v.x)}`, `"y": ${Math.round(v.y)}`];
+    if (v.hidden) parts.push('"hidden": true');
+    lines.push(`    ${JSON.stringify(k)}: { ${parts.join(', ')} }${comma}`);
   });
   lines.push('  },');
 

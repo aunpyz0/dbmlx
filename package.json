@@ -19,7 +19,7 @@
     "schema",
     "ddd"
   ],
-  "main": "./dist/extension/extension.js",
+  "main": "./dist/extension/extension/extension.js",
   "packageManager": "pnpm@10.33.0",
   "contributes": {
     "commands": [
@@ -37,7 +37,34 @@
         "command": "dddbml.pruneOrphans",
         "title": "dddbml: Prune orphan layout entries",
         "category": "dddbml"
+      },
+      {
+        "command": "dddbml.zoomIn",
+        "title": "dddbml: Zoom In",
+        "category": "dddbml"
+      },
+      {
+        "command": "dddbml.zoomOut",
+        "title": "dddbml: Zoom Out",
+        "category": "dddbml"
+      },
+      {
+        "command": "dddbml.resetView",
+        "title": "dddbml: Reset View",
+        "category": "dddbml"
+      },
+      {
+        "command": "dddbml.fitToContent",
+        "title": "dddbml: Fit to Content",
+        "category": "dddbml"
       }
+    ],
+    "keybindings": [
+      { "command": "dddbml.zoomIn",       "key": "ctrl+=",       "mac": "cmd+=",       "when": "activeWebviewPanelId == 'dddbml.diagram'" },
+      { "command": "dddbml.zoomIn",       "key": "ctrl+shift+=", "mac": "cmd+shift+=", "when": "activeWebviewPanelId == 'dddbml.diagram'" },
+      { "command": "dddbml.zoomOut",      "key": "ctrl+-",       "mac": "cmd+-",       "when": "activeWebviewPanelId == 'dddbml.diagram'" },
+      { "command": "dddbml.resetView",    "key": "ctrl+0",       "mac": "cmd+0",       "when": "activeWebviewPanelId == 'dddbml.diagram'" },
+      { "command": "dddbml.fitToContent", "key": "ctrl+1",       "mac": "cmd+1",       "when": "activeWebviewPanelId == 'dddbml.diagram'" }
     ],
     "menus": {
       "editor/title": [

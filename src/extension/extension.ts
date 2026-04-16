@@ -13,16 +13,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand('dddbml.resetLayout', async () => {
+      const active = DiagramPanel.getActive();
+      if (active) return active.resetLayout();
       const uri = resolveActiveDbmlUri();
-      if (!uri) return;
-      DiagramPanel.get(uri)?.resetLayout();
+      if (uri) DiagramPanel.get(uri)?.resetLayout();
     }),
 
-    vscode.commands.registerCommand('dddbml.pruneOrphans', async () => {
+    vscode.commands.registerCommand('dddbml.pruneOrphans', () => {
+      const active = DiagramPanel.getActive();
+      if (active) return active.pruneOrphans();
       const uri = resolveActiveDbmlUri();
-      if (!uri) return;
-      DiagramPanel.get(uri)?.pruneOrphans();
+      if (uri) DiagramPanel.get(uri)?.pruneOrphans();
     }),
+
+    vscode.commands.registerCommand('dddbml.zoomIn',       () => DiagramPanel.getActive()?.sendViewportCommand('zoomIn')),
+    vscode.commands.registerCommand('dddbml.zoomOut',      () => DiagramPanel.getActive()?.sendViewportCommand('zoomOut')),
+    vscode.commands.registerCommand('dddbml.resetView',    () => DiagramPanel.getActive()?.sendViewportCommand('resetView')),
+    vscode.commands.registerCommand('dddbml.fitToContent', () => DiagramPanel.getActive()?.sendViewportCommand('fitToContent')),
   );
 }
 
