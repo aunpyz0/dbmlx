@@ -1,19 +1,21 @@
 {
-  "name": "dddbml",
-  "displayName": "dddbml — DBML Diagram with Git-friendly Layout",
-  "description": "Interactive DBML diagram renderer for VSCode with per-table position persistence, TableGroup collapse for DDD contexts, and viewport culling for large schemas (5000+ tables).",
-  "version": "0.1.2",
-  "publisher": "TWulfZ",
+  "name": "dbmlx",
+  "displayName": "DBMLX: Database Visual and Design",
+  "description": "Interactive .dbmlx diagram renderer for VSCode. Git-friendly layout persistence, DDD-aware TableGroup contexts, LSP intelligence, SVG/PNG export, and viewport culling for 5000+ tables.",
+  "version": "0.1.3",
+  "publisher": "ZenonSI",
   "icon": "docs/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Visualization",
+    "Programming Languages",
     "Other"
   ],
   "keywords": [
     "dbml",
+    "dbmlx",
     "diagram",
     "erd",
     "database",
@@ -25,114 +27,126 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/TWulfZ/dddbml"
+    "url": "https://github.com/myzenon/dbmlx"
   },
-  "homepage": "https://github.com/TWulfZ/dddbml#readme",
+  "homepage": "https://github.com/myzenon/dbmlx#readme",
   "bugs": {
-    "url": "https://github.com/TWulfZ/dddbml/issues"
+    "url": "https://github.com/myzenon/dbmlx/issues"
   },
   "contributes": {
     "commands": [
       {
-        "command": "dddbml.openDiagram",
-        "title": "dddbml: Open Diagram",
-        "category": "dddbml"
+        "command": "dbmlx.openDiagram",
+        "title": "Open Diagram",
+        "category": "DBMLX"
       },
       {
-        "command": "dddbml.resetLayout",
-        "title": "dddbml: Reset Layout (re-run auto-layout)",
-        "category": "dddbml"
+        "command": "dbmlx.resetLayout",
+        "title": "Auto Re-arrange Diagram",
+        "category": "DBMLX"
       },
       {
-        "command": "dddbml.pruneOrphans",
-        "title": "dddbml: Prune orphan layout entries",
-        "category": "dddbml"
+        "command": "dbmlx.pruneOrphans",
+        "title": "Prune Orphan Layout Entries",
+        "category": "DBMLX"
       },
       {
-        "command": "dddbml.zoomIn",
-        "title": "dddbml: Zoom In",
-        "category": "dddbml"
+        "command": "dbmlx.zoomIn",
+        "title": "Zoom In",
+        "category": "DBMLX"
       },
       {
-        "command": "dddbml.zoomOut",
-        "title": "dddbml: Zoom Out",
-        "category": "dddbml"
+        "command": "dbmlx.zoomOut",
+        "title": "Zoom Out",
+        "category": "DBMLX"
       },
       {
-        "command": "dddbml.resetView",
-        "title": "dddbml: Reset View",
-        "category": "dddbml"
+        "command": "dbmlx.resetView",
+        "title": "Reset View",
+        "category": "DBMLX"
       },
       {
-        "command": "dddbml.fitToContent",
-        "title": "dddbml: Fit to Content",
-        "category": "dddbml"
+        "command": "dbmlx.fitToContent",
+        "title": "Fit to Content",
+        "category": "DBMLX"
+      },
+      {
+        "command": "dbmlx.exportSvg",
+        "title": "Export Diagram as SVG",
+        "category": "DBMLX"
       }
     ],
     "keybindings": [
       {
-        "command": "dddbml.zoomIn",
+        "command": "dbmlx.zoomIn",
         "key": "ctrl+=",
         "mac": "cmd+=",
-        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+        "when": "activeWebviewPanelId == 'dbmlx.diagram'"
       },
       {
-        "command": "dddbml.zoomIn",
+        "command": "dbmlx.zoomIn",
         "key": "ctrl+shift+=",
         "mac": "cmd+shift+=",
-        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+        "when": "activeWebviewPanelId == 'dbmlx.diagram'"
       },
       {
-        "command": "dddbml.zoomOut",
+        "command": "dbmlx.zoomOut",
         "key": "ctrl+-",
         "mac": "cmd+-",
-        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+        "when": "activeWebviewPanelId == 'dbmlx.diagram'"
       },
       {
-        "command": "dddbml.resetView",
+        "command": "dbmlx.resetView",
         "key": "ctrl+0",
         "mac": "cmd+0",
-        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+        "when": "activeWebviewPanelId == 'dbmlx.diagram'"
       },
       {
-        "command": "dddbml.fitToContent",
+        "command": "dbmlx.fitToContent",
         "key": "ctrl+1",
         "mac": "cmd+1",
-        "when": "activeWebviewPanelId == 'dddbml.diagram'"
+        "when": "activeWebviewPanelId == 'dbmlx.diagram'"
       }
     ],
     "menus": {
       "editor/title": [
         {
-          "when": "resourceExtname == .dbml",
-          "command": "dddbml.openDiagram",
+          "when": "resourceExtname == .dbmlx",
+          "command": "dbmlx.openDiagram",
           "group": "navigation"
         }
       ],
       "explorer/context": [
         {
-          "when": "resourceExtname == .dbml",
-          "command": "dddbml.openDiagram",
+          "when": "resourceExtname == .dbmlx",
+          "command": "dbmlx.openDiagram",
           "group": "navigation"
         }
       ]
     },
     "languages": [
       {
-        "id": "dbml",
+        "id": "dbmlx",
         "extensions": [
-          ".dbml"
+          ".dbmlx"
         ],
         "aliases": [
-          "DBML",
-          "dbml"
+          "Database Markup Language Extension",
+          "dbmlx"
         ]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "dbmlx",
+        "scopeName": "source.dbmlx",
+        "path": "./syntaxes/dbmlx.tmLanguage.json"
       }
     ]
   },
   "activationEvents": [
-    "onLanguage:dbml",
-    "onCommand:dddbml.openDiagram"
+    "onLanguage:dbmlx",
+    "onCommand:dbmlx.openDiagram"
   ],
   "scripts": {
     "build:extension": "node -e \"require('fs').rmSync('dist/extension',{recursive:true,force:true})\" && esbuild src/extension/extension.ts --bundle --outfile=dist/extension/extension/extension.js --external:vscode --platform=node --format=cjs --minify --sourcemap",

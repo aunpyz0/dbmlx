@@ -6,6 +6,16 @@
 
 export type QualifiedName = string; // e.g., "public.users"
 
+export type ColumnChangeKind = 'add' | 'drop' | 'modify';
+
+export interface ColumnChange {
+  kind: ColumnChangeKind;
+  /** For 'modify': new column name (undefined = name unchanged) */
+  afterName?: string;
+  /** For 'modify': new column type (undefined = type unchanged) */
+  afterType?: string;
+}
+
 export interface Column {
   name: string;
   type: string;
@@ -24,6 +34,8 @@ export interface Table {
   columns: Column[];
   note?: string | null;
   groupName?: string | null;
+  /** Migration change annotations keyed by column name. Empty object if no changes. */
+  columnChanges?: Record<string, ColumnChange>;
 }
 
 export type RefEndpointRelation = '1' | '*'; // one or many
@@ -41,10 +53,22 @@ export interface TableGroup {
   note?: string | null;
 }
 
+/** A named, filterable view of the diagram defined in DBML with DiagramView { }. */
+export interface DiagramView {
+  name: string;
+  /** Specific unqualified table names, or null meaning "not filtered by tables". */
+  tables: string[] | null;
+  /** Specific table group names, or null meaning "not filtered by groups". */
+  tableGroups: string[] | null;
+  /** Specific schema names, or null meaning "not filtered by schemas". */
+  schemas: string[] | null;
+}
+
 export interface Schema {
   tables: Table[];
   refs: Ref[];
   groups: TableGroup[];
+  views: DiagramView[];
 }
 
 export interface ParseError {
@@ -96,7 +120,8 @@ export type HostToWebview =
   | { type: 'layout:loaded'; payload: Layout }
   | { type: 'layout:external-change'; payload: Layout }
   | { type: 'theme:change'; payload: { kind: 'light' | 'dark' } }
-  | { type: 'viewport:command'; payload: { action: ViewportCommand } };
+  | { type: 'viewport:command'; payload: { action: ViewportCommand } }
+  | { type: 'export:request' };
 
 /* ----- Protocol: Webview → Host ----- */
 
@@ -105,4 +130,8 @@ export type WebviewToHost =
   | { type: 'layout:persist'; payload: Partial<Layout> }
   | { type: 'command:reveal'; payload: { tableName: QualifiedName } }
   | { type: 'command:pruneOrphans' }
-  | { type: 'error:log'; payload: { message: string; stack?: string } };
+  | { type: 'command:resetLayout' }
+  | { type: 'error:log'; payload: { message: string; stack?: string } }
+  | { type: 'export:svg'; payload: { svg: string } }
+  | { type: 'export:png'; payload: { data: string } } // base64 PNG data URL
+  | { type: 'view:switch'; payload: { view: string | null } };

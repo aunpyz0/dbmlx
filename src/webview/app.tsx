@@ -11,6 +11,7 @@ import { panBy, zoomAt } from './render/viewport';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
 import { GroupPanel, colorForGroup } from './groups/groupPanel';
+import { ViewPanel } from './render/viewPanel';
 import { Tooltip } from './render/tooltip';
 import type { QualifiedName, Ref, Table, WebviewToHost } from '../shared/types';
 
@@ -28,8 +29,29 @@ const GROUP_PREFIX = '__group__:';
 const groupId = (name: string) => GROUP_PREFIX + name;
 
 export function App(_props: AppProps) {
-  const schema = useAppStore((s) => s.schema);
+  const rawSchema = useAppStore((s) => s.schema);
+  const activeView = useAppStore((s) => s.activeView);
   const parseError = useAppStore((s) => s.parseError);
+
+  // When a view is active, filter tables to only those included by the view.
+  const schema = useMemo(() => {
+    if (!activeView) return rawSchema;
+    const view = rawSchema.views.find((v) => v.name === activeView);
+    if (!view) return rawSchema;
+    // Collect the set of allowed qualified names (union of Tables + TableGroups + Schemas filters)
+    const allowed = new Set<string>();
+    for (const t of rawSchema.tables) {
+      // null = axis not specified (exclude); [] = wildcard *; [...names] = specific match
+      const tableMatch = view.tables === null ? false : (view.tables.length === 0 || view.tables.includes(t.tableName) || view.tables.includes(t.name));
+      const groupMatch = view.tableGroups === null ? false : (view.tableGroups.length === 0 || (t.groupName != null && view.tableGroups.includes(t.groupName)));
+      const schemaMatch = view.schemas === null ? false : (view.schemas.length === 0 || view.schemas.includes(t.schemaName));
+      if (tableMatch || groupMatch || schemaMatch) allowed.add(t.name);
+    }
+    // If ALL three axes are null (empty DiagramView {}), show nothing.
+    const filteredTables = rawSchema.tables.filter((t) => allowed.has(t.name));
+    const filteredRefs = rawSchema.refs.filter((r) => allowed.has(r.source.table) && allowed.has(r.target.table));
+    return { ...rawSchema, tables: filteredTables, refs: filteredRefs };
+  }, [rawSchema, activeView]);
   const positions = useAppStore((s) => s.positions);
   const viewport = useAppStore((s) => s.viewport);
   const ready = useAppStore((s) => s.ready);
@@ -47,11 +69,12 @@ export function App(_props: AppProps) {
       return estimateSize(t?.columns.length ?? 0);
     };
     const layoutTargets = positions.size === 0 ? schema.tables : missing;
-    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf);
+    const laidOut = autoLayout(layoutTargets, schema.refs, sizeOf, store.getState().layoutAlgorithm, store.getState().groupAwareLayout);
     const entries: Array<[QualifiedName, { x: number; y: number }]> = [];
     for (const [name, pos] of laidOut) entries.push([name, pos]);
     if (entries.length > 0) store.getState().setPositionsBatch(entries);
-  }, [schema, ready]);
+  // positions intentionally in deps: when resetLayout clears them, this must re-fire
+  }, [schema, ready, positions]);
 
   const columnCountByTable = useMemo(() => {
     const m = new Map<QualifiedName, number>();
@@ -219,20 +242,27 @@ export function App(_props: AppProps) {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = el.getBoundingClientRect();
-      const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-      const factor = Math.pow(1.0015, -e.deltaY);
-      zoomAt(screen, factor);
+      // ctrlKey = pinch-to-zoom gesture on Mac trackpad (and Ctrl+scroll on mouse)
+      if (e.ctrlKey) {
+        const screen = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        const factor = Math.pow(1.005, -e.deltaY);
+        zoomAt(screen, factor);
+      } else {
+        // Two-finger scroll on trackpad (or plain scroll wheel) → pan
+        panBy(-e.deltaX, -e.deltaY);
+      }
     };
 
     let panning = false;
     let lastX = 0;
     let lastY = 0;
+    let spaceDown = false;
 
     let marqueeActive = false;
     let marqueeStart = { x: 0, y: 0 };
 
     const onPointerDown = (e: PointerEvent) => {
-      if (e.button === 1) {
+      if (e.button === 1 || (e.button === 0 && spaceDown)) {
         e.preventDefault();
         panning = true;
         lastX = e.clientX;
@@ -277,6 +307,7 @@ export function App(_props: AppProps) {
         panning = false;
         try { el.releasePointerCapture(e.pointerId); } catch { /* noop */ }
         el.classList.remove('is-panning');
+        if (!spaceDown) el.classList.remove('is-space-pan');
         return;
       }
       if (marqueeActive) {
@@ -317,6 +348,17 @@ export function App(_props: AppProps) {
       if (e.key === 'Escape') {
         store.getState().clearSelection();
       }
+      if (e.key === ' ' && !e.repeat) {
+        e.preventDefault();
+        spaceDown = true;
+        el.classList.add('is-space-pan');
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === ' ') {
+        spaceDown = false;
+        if (!panning) el.classList.remove('is-space-pan');
+      }
     };
 
     el.addEventListener('wheel', onWheel, { passive: false });
@@ -325,6 +367,7 @@ export function App(_props: AppProps) {
     el.addEventListener('pointerup', onPointerUp);
     el.addEventListener('pointercancel', onPointerUp);
     window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
 
     return () => {
       el.removeEventListener('wheel', onWheel);
@@ -333,6 +376,7 @@ export function App(_props: AppProps) {
       el.removeEventListener('pointerup', onPointerUp);
       el.removeEventListener('pointercancel', onPointerUp);
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
     };
   }, [ready, spatialIndex]);
 
@@ -464,6 +508,7 @@ export function App(_props: AppProps) {
         {ready && schema.tables.length === 0 && !parseError ? (
           <div class="ddd-empty">empty DBML — define a Table to see it here.</div>
         ) : null}
+        {ready ? <ViewPanel /> : null}
         {ready ? <GroupPanel /> : null}
         {ready ? <ZoomButtons /> : null}
         {ready ? <ActionsPanel /> : null}

@@ -1,5 +1,5 @@
 import { useState } from 'preact/hooks';
-import type { Column, Table } from '../../shared/types';
+import type { Column, ColumnChange, Table } from '../../shared/types';
 import type { LodLevel } from './lod';
 import { estimateSize } from '../layout/autoLayout';
 import { startDrag, schedulePersist } from '../drag/dragController';
@@ -75,9 +75,12 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
     ? table.columns.filter((c) => c.pk || (fkColumns && fkColumns.has(c.name)))
     : table.columns;
 
+  const changes = table.columnChanges ?? {};
+  const changeCount = Object.keys(changes).length;
+
   return (
     <div
-      class={`ddd-table${selClass}`}
+      class={`ddd-table${selClass}${changeCount > 0 ? ' ddd-table--changed' : ''}`}
       data-id={table.name}
       onPointerDown={onPointerDown}
       onDblClick={onDblClick}
@@ -87,17 +90,17 @@ export function TableNode({ table, x, y, lod, selected, color, fkColumns }: Tabl
         borderTopColor: color ?? undefined,
       }}
     >
-      <TableHeader table={table} configurable headerStyle={headerStyle} />
+      <TableHeader table={table} configurable headerStyle={headerStyle} changeCount={changeCount} />
       <ul class="ddd-table__cols">
         {visibleCols.map((c) => (
-          <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} />
+          <ColumnRow key={c.name} col={c} isFk={fkColumns?.has(c.name) ?? false} change={changes[c.name]} />
         ))}
       </ul>
     </div>
   );
 }
 
-function TableHeader({ table, configurable, headerStyle }: { table: Table; configurable?: boolean; headerStyle?: Record<string, string> }) {
+function TableHeader({ table, configurable, headerStyle, changeCount }: { table: Table; configurable?: boolean; headerStyle?: Record<string, string>; changeCount?: number }) {
   const [popup, setPopup] = useState<{ x: number; y: number } | null>(null);
   const existing = store.getState().tableColors.get(table.name);
 
@@ -136,6 +139,7 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
         {table.schemaName !== 'public' ? <span class="ddd-table__schema">{table.schemaName}.</span> : null}
         <span class="ddd-table__name">{table.tableName}</span>
         {table.note ? <TableNoteIcon note={table.note} name={table.name} /> : null}
+        {changeCount ? <span class="ddd-table__change-badge" title={`${changeCount} migration change${changeCount > 1 ? 's' : ''}`}>{changeCount}</span> : null}
       </span>
       {configurable ? (
         <button
@@ -159,7 +163,7 @@ function TableHeader({ table, configurable, headerStyle }: { table: Table; confi
   );
 }
 
-function ColumnRow({ col, isFk }: { col: Column; isFk: boolean }) {
+function ColumnRow({ col, isFk, change }: { col: Column; isFk: boolean; change?: ColumnChange }) {
   const onEnter = (e: Event) => {
     if (!col.note) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -174,14 +178,40 @@ function ColumnRow({ col, isFk }: { col: Column; isFk: boolean }) {
   const onLeave = () => {
     if (store.getState().tooltip) store.getState().setTooltip(null);
   };
+
+  const changeClass = change
+    ? change.kind === 'add' ? ' ddd-col--add'
+    : change.kind === 'drop' ? ' ddd-col--drop'
+    : ' ddd-col--modify'
+    : '';
+
+  if (change?.kind === 'modify') {
+    const afterName = change.afterName ?? col.name;
+    const afterType = change.afterType ?? col.type;
+    return (
+      <li class={`ddd-table__col${isFk ? ' is-fk' : ''}${changeClass}`} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+        <div class="ddd-col__before">
+          <span class="ddd-table__col-left"><span class="ddd-table__col-name">{col.name}</span></span>
+          <span class="ddd-table__col-right"><span class="ddd-table__col-type">{col.type}</span></span>
+        </div>
+        <div class="ddd-col__after">
+          <span class="ddd-table__col-left"><span class="ddd-table__col-name">{afterName}</span></span>
+          <span class="ddd-table__col-right"><span class="ddd-table__col-type">{afterType}</span></span>
+        </div>
+      </li>
+    );
+  }
+
   return (
     <li
-      class={`ddd-table__col${isFk ? ' is-fk' : ''}`}
+      class={`ddd-table__col${isFk ? ' is-fk' : ''}${changeClass}`}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
     >
       <span class="ddd-table__col-left">
-        <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>{col.name}</span>
+        <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>
+          {change?.kind === 'add' ? '+\u2009' : ''}{col.name}
+        </span>
         {col.pk ? <IconKey size={10} /> : null}
         {col.note ? <IconNote size={10} /> : null}
       </span>

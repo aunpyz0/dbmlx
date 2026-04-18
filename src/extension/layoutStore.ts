@@ -1,16 +1,17 @@
 import * as vscode from 'vscode';
 import type { EdgeLayout, Layout, GroupLayout, TableLayout } from '../shared/types';
 
-export function sidecarUri(dbmlUri: vscode.Uri): vscode.Uri {
-  return dbmlUri.with({ path: dbmlUri.path + '.layout.json' });
+export function sidecarUri(dbmlUri: vscode.Uri, view?: string | null): vscode.Uri {
+  const suffix = view ? `.${view}.layout.json` : '.layout.json';
+  return dbmlUri.with({ path: dbmlUri.path + suffix });
 }
 
 export function emptyLayout(): Layout {
   return { version: 1, viewport: { x: 0, y: 0, zoom: 1 }, tables: {}, groups: {}, edges: {} };
 }
 
-export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
-  const uri = sidecarUri(dbmlUri);
+export async function readLayout(dbmlUri: vscode.Uri, view?: string | null): Promise<Layout> {
+  const uri = sidecarUri(dbmlUri, view);
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
     const text = new TextDecoder('utf-8').decode(bytes);
@@ -20,8 +21,8 @@ export async function readLayout(dbmlUri: vscode.Uri): Promise<Layout> {
   }
 }
 
-export async function writeLayout(dbmlUri: vscode.Uri, layout: Layout): Promise<string> {
-  const layoutUri = sidecarUri(dbmlUri);
+export async function writeLayout(dbmlUri: vscode.Uri, layout: Layout, view?: string | null): Promise<string> {
+  const layoutUri = sidecarUri(dbmlUri, view);
   const tmpUri = layoutUri.with({ path: layoutUri.path + '.tmp' });
   const serialized = serializeLayout(layout);
   const bytes = new TextEncoder().encode(serialized);

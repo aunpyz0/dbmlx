@@ -109,7 +109,32 @@ export const IconChevronUp = (p?: IconProps) => wrap(
   p,
 );
 
+export const IconAutoLayout = (p?: IconProps) => wrap(
+  'M1 2h4v3H1V2zm5 1.5h2v-1h7v1H8v.5H6v-.5zM1 7h4v3H1V7zm5 1.5h2v-1h7v1H8v.5H6v-.5zM1 12h4v3H1v-3zm5 1.5h2v-1h7v1H8v.5H6v-.5z',
+  p,
+);
+
+export const IconExport = (p?: IconProps) => wrap(
+  'M13 11v2H3v-2H2v3h12v-3h-1zM8 1v8.3l2.6-2.6.8.7L8 10.8 4.6 7.4l.8-.7L8 9.3V1h1-1z',
+  p,
+);
+
 export const IconFilter = (p?: IconProps) => wrap(
   'M2 3h12v1.5L9.5 9v4L6.5 11V9L2 4.5V3zm1.2 1 4.3 4.3v2.3l1 .7V8.3L12.8 4H3.2z',
+  p,
+);
+
+export const IconLayoutLR = (p?: IconProps) => wrap(
+  'M1 4h4v8H1V4zm5 3.5h6v1H6zM11 4h4v8h-4V4z',
+  p,
+);
+
+export const IconLayoutSnowflake = (p?: IconProps) => wrap(
+  'M6 5h4v6H6V5zM1 7h3v2H1V7zM12 7h3v2h-3V7zM6.5 1h3v3h-3V1zM6.5 12h3v3h-3v-3z',
+  p,
+);
+
+export const IconLayoutCompact = (p?: IconProps) => wrap(
+  'M1 1h4v4H1V1zm5 0h4v4H6V1zm5 0h4v4h-4V1zM1 6h4v4H1V6zm5 0h4v4H6V6zm5 0h4v4h-4V6zM1 11h4v4H1v-4zm5 0h4v4H6v-4zm5 0h4v4h-4v-4z',
   p,
 );

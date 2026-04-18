@@ -9,8 +9,8 @@ export interface EdgeRoute {
   /** Middle segment of the Manhattan path, exposed so callers can render a draggable handle over it. */
   midSeg?: { x1: number; y1: number; x2: number; y2: number; axis: 'v' | 'h' };
   /** Resolved port coordinates (world space), useful for hit-testing / highlighting. */
-  source: { x: number; y: number };
-  target: { x: number; y: number };
+  source: { x: number; y: number; side: Side };
+  target: { x: number; y: number; side: Side };
 }
 
 /** Optional per-endpoint port override — used to align edges with the PK/FK column row. */
@@ -97,11 +97,17 @@ export function routeRefs(
     }
   }
 
-  // 4. build paths
-  const out: EdgeRoute[] = [];
+  // 4. resolve port points and detect same-table-pair groups for midX staggering
+  const BUNDLE_SEP = 16; // px between parallel edges on the same pair of tables
+  const PORT_SEP = 6;    // px between edges sharing the exact same column port
+
+  // Compute raw port points for every edge
+  type PortedEdge = { idx: number; a: { x: number; y: number }; b: { x: number; y: number }; userDx: number };
+  const ported: Array<PortedEdge | null> = [];
+
   for (let i = 0; i < decisions.length; i++) {
     const d = decisions[i];
-    if (!d) continue;
+    if (!d) { ported.push(null); continue; }
     const assign = portAssign[i]!;
 
     let sourceY: number | undefined;
@@ -119,14 +125,77 @@ export function routeRefs(
 
     const a = portPoint(d.srcBbox, assign.sourceSide, assign.sourceRatio, sourceY);
     const b = portPoint(d.tgtBbox, assign.targetSide, assign.targetRatio, targetY);
+    const userDx = offsetResolver?.(d.ref.id)?.dx ?? 0;
+    ported.push({ idx: i, a, b, userDx });
+  }
 
-    // All routes are H-V-H (forced horizontal sides). midX is draggable via offsetResolver.
-    const userOffset = offsetResolver?.(d.ref.id);
-    const midX = Math.round((a.x + b.x) / 2 + (userOffset?.dx ?? 0));
+  // Stagger Y for edges that share the exact same source port (same column override)
+  const srcPortGroups = new Map<string, number[]>();
+  for (let i = 0; i < ported.length; i++) {
+    const p = ported[i];
+    if (!p) continue;
+    const key = `${p.a.x},${p.a.y}`;
+    if (!srcPortGroups.has(key)) srcPortGroups.set(key, []);
+    srcPortGroups.get(key)!.push(i);
+  }
+  for (const [, idxs] of srcPortGroups) {
+    if (idxs.length < 2) continue;
+    const n = idxs.length;
+    for (let i = 0; i < n; i++) {
+      ported[idxs[i]!]!.a.y += Math.round((i - (n - 1) / 2) * PORT_SEP);
+    }
+  }
+
+  // Same for target ports
+  const tgtPortGroups = new Map<string, number[]>();
+  for (let i = 0; i < ported.length; i++) {
+    const p = ported[i];
+    if (!p) continue;
+    const key = `${p.b.x},${p.b.y}`;
+    if (!tgtPortGroups.has(key)) tgtPortGroups.set(key, []);
+    tgtPortGroups.get(key)!.push(i);
+  }
+  for (const [, idxs] of tgtPortGroups) {
+    if (idxs.length < 2) continue;
+    const n = idxs.length;
+    for (let i = 0; i < n; i++) {
+      ported[idxs[i]!]!.b.y += Math.round((i - (n - 1) / 2) * PORT_SEP);
+    }
+  }
+
+  // Stagger midX for edges that connect the same pair of table sides
+  const tablePairGroups = new Map<string, number[]>();
+  for (let i = 0; i < decisions.length; i++) {
+    const d = decisions[i];
+    if (!d || !ported[i]) continue;
+    const assign = portAssign[i]!;
+    const key = `${d.ref.source.table}|${d.ref.target.table}|${assign.sourceSide}|${assign.targetSide}`;
+    if (!tablePairGroups.has(key)) tablePairGroups.set(key, []);
+    tablePairGroups.get(key)!.push(i);
+  }
+  const midXOffset = new Map<number, number>();
+  for (const [, idxs] of tablePairGroups) {
+    if (idxs.length < 2) continue;
+    const n = idxs.length;
+    for (let i = 0; i < n; i++) {
+      midXOffset.set(idxs[i]!, Math.round((i - (n - 1) / 2) * BUNDLE_SEP));
+    }
+  }
+
+  // 5. build paths
+  const out: EdgeRoute[] = [];
+  for (let i = 0; i < decisions.length; i++) {
+    const d = decisions[i];
+    const p = ported[i];
+    if (!d || !p) continue;
+    const assign = portAssign[i]!;
+
+    const { a, b, userDx } = p;
+    const midX = Math.round((a.x + b.x) / 2 + userDx + (midXOffset.get(i) ?? 0));
     const path = `M${a.x},${a.y} H${midX} V${b.y} H${b.x}`;
     const midSeg = { x1: midX, y1: a.y, x2: midX, y2: b.y, axis: 'v' as const };
 
-    out.push({ id: d.ref.id, d: path, midSeg, source: a, target: b });
+    out.push({ id: d.ref.id, d: path, midSeg, source: { ...a, side: assign.sourceSide }, target: { ...b, side: assign.targetSide } });
   }
   return out;
 }

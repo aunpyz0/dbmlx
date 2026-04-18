@@ -1,0 +1,294 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Database Markup Language Extension",
+  "scopeName": "source.dbmlx",
+  "fileTypes": ["dbmlx"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#include-directive" },
+    { "include": "#table-block" },
+    { "include": "#enum-block" },
+    { "include": "#tablegroup-block" },
+    { "include": "#ref-inline" },
+    { "include": "#ref-block" },
+    { "include": "#project-block" },
+    { "include": "#diagramview-block" },
+    { "include": "#keyword" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.dbmlx",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.dbmlx",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "include-directive": {
+      "name": "meta.preprocessor.include.dbmlx",
+      "match": "^(?://|!)include\\s+(\"[^\"]*\")",
+      "captures": {
+        "1": { "name": "string.quoted.double.dbmlx" }
+      }
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.dbmlx",
+          "begin": "'",
+          "end": "'",
+          "patterns": [{ "name": "constant.character.escape.dbmlx", "match": "\\\\." }]
+        },
+        {
+          "name": "string.quoted.double.dbmlx",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [{ "name": "constant.character.escape.dbmlx", "match": "\\\\." }]
+        },
+        {
+          "name": "string.quoted.other.dbmlx",
+          "begin": "'''",
+          "end": "'''"
+        }
+      ]
+    },
+    "note-value": {
+      "patterns": [
+        { "include": "#string" }
+      ]
+    },
+    "column-settings": {
+      "name": "meta.column-settings.dbmlx",
+      "begin": "\\[",
+      "end": "\\]",
+      "patterns": [
+        { "include": "#comment" },
+        {
+          "name": "storage.modifier.dbmlx",
+          "match": "\\b(pk|primary key|not null|null|unique|increment|default|note|ref)\\b"
+        },
+        { "include": "#ref-operator" },
+        { "include": "#string" },
+        {
+          "name": "constant.numeric.dbmlx",
+          "match": "-?\\b\\d+(\\.\\d+)?\\b"
+        },
+        {
+          "name": "constant.language.dbmlx",
+          "match": "\\b(true|false|null)\\b"
+        },
+        {
+          "name": "support.function.dbmlx",
+          "match": "\\b\\w+\\s*(?=\\()"
+        }
+      ]
+    },
+    "table-block": {
+      "name": "meta.table.dbmlx",
+      "begin": "(?i)\\b(Table)\\s+([\\w\".]+)(?:\\s+(as)\\s+(\\w+))?(?:\\s*(\\[[^\\]]*\\]))?\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.table.dbmlx" },
+        "2": { "name": "entity.name.type.table.dbmlx" },
+        "3": { "name": "keyword.other.as.dbmlx" },
+        "4": { "name": "variable.other.alias.dbmlx" },
+        "5": { "name": "meta.table-settings.dbmlx" },
+        "6": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#indexes-block" },
+        { "include": "#note-statement" },
+        { "include": "#column-definition" }
+      ]
+    },
+    "column-definition": {
+      "name": "meta.column.dbmlx",
+      "match": "^\\s*(\\w+)\\s+([\\w\\(\\)\\[\\], ]+?)(?=\\s*(?:\\[|//|$))",
+      "captures": {
+        "1": { "name": "variable.other.column.dbmlx" },
+        "2": { "name": "support.type.column-type.dbmlx" }
+      }
+    },
+    "indexes-block": {
+      "name": "meta.indexes.dbmlx",
+      "begin": "(?i)\\b(indexes)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.indexes.dbmlx" },
+        "2": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#column-settings" },
+        {
+          "name": "variable.other.column.dbmlx",
+          "match": "\\b\\w+\\b"
+        }
+      ]
+    },
+    "note-statement": {
+      "name": "meta.note.dbmlx",
+      "begin": "(?i)\\b(note)\\s*:\\s*",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.note.dbmlx" }
+      },
+      "end": "$",
+      "patterns": [{ "include": "#string" }]
+    },
+    "enum-block": {
+      "name": "meta.enum.dbmlx",
+      "begin": "(?i)\\b(enum)\\s+([\\w\".]+)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.enum.dbmlx" },
+        "2": { "name": "entity.name.type.enum.dbmlx" },
+        "3": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#column-settings" },
+        {
+          "name": "variable.other.enummember.dbmlx",
+          "match": "^\\s*([\\w'\"]+)"
+        }
+      ]
+    },
+    "tablegroup-block": {
+      "name": "meta.tablegroup.dbmlx",
+      "begin": "(?i)\\b(TableGroup)\\s+(\\w+)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.tablegroup.dbmlx" },
+        "2": { "name": "entity.name.type.tablegroup.dbmlx" },
+        "3": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#note-statement" },
+        {
+          "name": "entity.name.type.table.dbmlx",
+          "match": "\\b[\\w.]+\\b"
+        }
+      ]
+    },
+    "ref-operator": {
+      "name": "keyword.operator.ref.dbmlx",
+      "match": "<>|[<>-]"
+    },
+    "ref-inline": {
+      "name": "meta.ref.inline.dbmlx",
+      "match": "(?i)\\b(Ref)\\s*(?:(\\w+)\\s*)?:\\s*([\\w.]+)\\s*(<>|[<>-])\\s*([\\w.]+)",
+      "captures": {
+        "1": { "name": "keyword.other.ref.dbmlx" },
+        "2": { "name": "entity.name.ref.dbmlx" },
+        "3": { "name": "variable.other.table-column.dbmlx" },
+        "4": { "name": "keyword.operator.ref.dbmlx" },
+        "5": { "name": "variable.other.table-column.dbmlx" }
+      }
+    },
+    "ref-block": {
+      "name": "meta.ref.block.dbmlx",
+      "begin": "(?i)\\b(Ref)\\s*(?:(\\w+)\\s*)?\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.ref.dbmlx" },
+        "2": { "name": "entity.name.ref.dbmlx" },
+        "3": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#ref-operator" },
+        {
+          "name": "variable.other.table-column.dbmlx",
+          "match": "[\\w.()]+"
+        }
+      ]
+    },
+    "project-block": {
+      "name": "meta.project.dbmlx",
+      "begin": "(?i)\\b(Project)\\s+(\\w+)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.project.dbmlx" },
+        "2": { "name": "entity.name.project.dbmlx" },
+        "3": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#note-statement" },
+        { "include": "#string" },
+        {
+          "name": "support.other.dbmlx",
+          "match": "\\b\\w+\\b"
+        }
+      ]
+    },
+    "diagramview-block": {
+      "name": "meta.diagramview.dbmlx",
+      "begin": "(?i)\\b(DiagramView)\\s+(\\w+)\\s*(\\{)",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.diagramview.dbmlx" },
+        "2": { "name": "entity.name.type.diagramview.dbmlx" },
+        "3": { "name": "punctuation.section.block.begin.dbmlx" }
+      },
+      "end": "\\}",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.block.end.dbmlx" }
+      },
+      "patterns": [
+        { "include": "#comment" },
+        {
+          "name": "meta.diagramview.section.dbmlx",
+          "begin": "(?i)\\b(Tables|TableGroups|Schemas)\\s*(\\{)",
+          "beginCaptures": {
+            "1": { "name": "keyword.other.diagramview.section.dbmlx" },
+            "2": { "name": "punctuation.section.block.begin.dbmlx" }
+          },
+          "end": "\\}",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.block.end.dbmlx" }
+          },
+          "patterns": [
+            { "include": "#comment" },
+            {
+              "name": "constant.language.wildcard.dbmlx",
+              "match": "\\*"
+            },
+            {
+              "name": "entity.name.type.table.dbmlx",
+              "match": "[\\w.]+"
+            }
+          ]
+        }
+      ]
+    },
+    "keyword": {
+      "name": "keyword.other.dbmlx",
+      "match": "(?i)\\b(Table|Ref|Enum|TableGroup|Project|DiagramView|indexes|as|note|default|not null|null|pk|unique|increment|primary key)\\b"
+    }
+  }
+}

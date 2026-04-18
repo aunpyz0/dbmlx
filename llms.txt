@@ -1,0 +1,144 @@
+# DBMLX Language
+
+`.dbmlx` is a superset of DBML (Database Markup Language). All valid DBML is valid `.dbmlx`. Extensions: `!include` for multi-file schemas, `DiagramView` for named filtered views, and migration diff annotations (`[add]`, `[drop]`, `[modify:]`).
+
+Files use the `.dbmlx` extension. The VSCode extension (DBMLX) renders them as interactive diagrams.
+
+Full reference: `docs/language-reference.md`
+
+---
+
+## Core syntax (inherited from DBML)
+
+```dbmlx
+Table schema.table_name {
+  id          int           [pk, increment]
+  name        varchar(255)  [not null]
+  email       text          [unique]
+  amount      decimal(10,2) [default: 0]
+  note        text          [null, note: 'optional']
+  created_at  timestamp     [default: `now()`]
+
+  indexes {
+    (email)       [unique, name: "uq_email"]
+    (name, email) [name: "idx_name_email"]
+  }
+
+  Note: 'Table-level description'
+}
+
+// Refs (foreign keys)
+Ref: orders.user_id > users.id       // many-to-one
+Ref: users.id < orders.user_id       // one-to-many
+Ref: users.id - profiles.user_id     // one-to-one
+Ref: posts.id <> tags.id             // many-to-many
+Ref: orders.(user_id, org_id) > users.(id, org_id)  // composite
+
+// Inline ref inside Table
+Table orders {
+  user_id  int  [ref: > users.id]
+}
+
+// Enums
+Enum status { active inactive pending }
+
+// TableGroups (bounded contexts)
+TableGroup billing { orders invoices payments }
+
+// Project metadata
+Project my_app { Note: 'Main schema' }
+```
+
+Schema prefix is optional: `Table users` = `Table public.users`.
+
+---
+
+## !include — multi-file schemas
+
+```dbmlx
+!include "auth/users.dbmlx"
+!include "billing/invoices.dbmlx"
+
+Ref: users.id < invoices.user_id
+```
+
+Paths are relative to the including file. Resolved before parsing.
+
+---
+
+## DiagramView — named filtered views
+
+Each view has its own layout file. Switching views in the diagram sidebar loads that view's saved positions.
+
+```dbmlx
+DiagramView auth_context {
+  Tables { users, sessions, roles }
+}
+
+DiagramView billing_overview {
+  TableGroups { billing }
+}
+
+DiagramView tenant_schema {
+  Schemas { tenant }
+}
+```
+
+Sections (`Tables`, `TableGroups`, `Schemas`) are unioned. Multiple sections = show tables matching any. Omit sections or use `*` to show all.
+
+---
+
+## Migration diff annotations
+
+Annotate columns to visualize a schema migration. Annotations are stripped before parsing — they never cause errors.
+
+```dbmlx
+Table orders {
+  id        int           [pk]
+  amount    decimal(10,2) [add]                             // new column — green + prefix
+  total     decimal       [drop]                            // removed — red strikethrough
+  customer  varchar(100)  [modify: name="customer_id" type="int"]  // rename+retype — amber two-row
+  status    varchar(50)   [not null] [drop]                 // combines with standard settings
+}
+```
+
+- `[add]` — column is being added. Renders green with `+` prefix.
+- `[drop]` — column is being removed. Renders red with strikethrough. Kept in parse for FK checks.
+- `[modify: name="x" type="y"]` — rename and/or retype. Both attributes optional. Renders before→after.
+
+---
+
+## Layout sidecar files
+
+Positions, viewport, group state, and edge offsets are stored alongside the schema. One file per view.
+
+| View | File |
+|---|---|
+| Default | `schema.dbmlx.layout.json` |
+| Named `auth_context` | `schema.dbmlx.auth_context.layout.json` |
+
+Format: keys alphabetically sorted, integer coords, `false`/zero values omitted for minimal Git diffs.
+
+```json
+{
+  "version": 1,
+  "viewport": { "x": 0, "y": 0, "zoom": 1.0 },
+  "tables": { "public.users": { "x": 120, "y": 80 } },
+  "groups": { "billing": { "collapsed": true, "color": "#D0E8FF" } },
+  "edges": {}
+}
+```
+
+Commit layout files alongside schema — teammates see the same diagram on checkout.
+
+---
+
+## What AI assistants should know
+
+- Generate `.dbmlx`, not `.dbml` — the file extension matters for the extension to activate.
+- `[add]`/`[drop]`/`[modify:]` are safe to use — the extension strips them before the DBML parser sees them.
+- `!include` paths must be relative. Do not use absolute paths.
+- `DiagramView` blocks go in the root schema file, not in included files.
+- TableGroup member names are unqualified (no schema prefix).
+- Layout files are machine-managed — do not edit them by hand unless correcting positions.
+- To scaffold a migration: copy the current table, annotate changed columns with `[add]`/`[drop]`/`[modify:]`.

@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useSyncExternalStore } from 'preact/compat';
 import type { EdgeLayout, GroupLayout, Layout, ParseError, QualifiedName, Schema, TableLayout, ViewportLayout } from '../../shared/types';
+import type { LayoutAlgorithm } from '../layout/autoLayout';
 
 export interface TooltipState {
   title: string;
@@ -25,6 +26,12 @@ export interface AppState {
   tooltip: TooltipState | null;
   /** Ephemeral view flag: render only PK + FK columns in tables. Not persisted. */
   showOnlyPkFk: boolean;
+  /** Ephemeral: algorithm to use next time auto-layout runs. Not persisted. */
+  layoutAlgorithm: LayoutAlgorithm;
+  /** Ephemeral: keep tables from the same group clustered together. Not persisted. */
+  groupAwareLayout: boolean;
+  /** Active DiagramView name, or null = show all tables. Ephemeral, not persisted. */
+  activeView: string | null;
 }
 
 export interface AppActions {
@@ -42,10 +49,14 @@ export interface AppActions {
   clearSelection(): void;
   setTooltip(t: TooltipState | null): void;
   toggleShowOnlyPkFk(): void;
+  setLayoutAlgorithm(algo: LayoutAlgorithm): void;
+  setGroupAwareLayout(v: boolean): void;
+  resetPositions(): void;
+  setActiveView(name: string | null): void;
 }
 
 const initial: AppState = {
-  schema: { tables: [], refs: [], groups: [] },
+  schema: { tables: [], refs: [], groups: [], views: [] },
   parseError: null,
   positions: new Map(),
   hiddenTables: new Set(),
@@ -58,6 +69,9 @@ const initial: AppState = {
   selection: new Set(),
   tooltip: null,
   showOnlyPkFk: false,
+  layoutAlgorithm: 'top-down' as LayoutAlgorithm,
+  groupAwareLayout: false,
+  activeView: null,
 };
 
 export const store = createStore<AppState & AppActions>((set, _get) => ({
@@ -146,6 +160,18 @@ export const store = createStore<AppState & AppActions>((set, _get) => ({
   },
   toggleShowOnlyPkFk() {
     set((s) => ({ showOnlyPkFk: !s.showOnlyPkFk }));
+  },
+  setLayoutAlgorithm(algo) {
+    set({ layoutAlgorithm: algo });
+  },
+  setGroupAwareLayout(v) {
+    set({ groupAwareLayout: v });
+  },
+  resetPositions() {
+    set({ positions: new Map() });
+  },
+  setActiveView(name) {
+    set({ activeView: name });
   },
 }));
 

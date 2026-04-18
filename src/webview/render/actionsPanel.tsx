@@ -1,11 +1,9 @@
 import { useState } from 'preact/hooks';
 import { store, useAppStore } from '../state/store';
-import { IconChevronDown, IconChevronUp, IconFilter } from '../icons';
+import { IconChevronDown, IconChevronUp, IconExport, IconFilter } from '../icons';
+import { postToHost } from '../vscode';
+import { generateSvg, svgToPngDataUrl } from './exportSvg';
 
-/**
- * Floating bottom-center actions panel. Collapses to a single chevron handle.
- * Hosts view-toggles that are ephemeral (not persisted), e.g. show-only-PK/FK.
- */
 export function ActionsPanel() {
   const [open, setOpen] = useState(false);
   const showOnlyPkFk = useAppStore((s) => s.showOnlyPkFk);
@@ -28,6 +26,28 @@ export function ActionsPanel() {
           >
             <IconFilter size={12} />
             <span>{showOnlyPkFk ? 'Show all columns' : 'PK/FK only'}</span>
+          </button>
+          <button
+            class="ddd-actions-btn"
+            title="Export diagram as SVG"
+            onClick={() => {
+              const svg = generateSvg(store.getState());
+              postToHost({ type: 'export:svg', payload: { svg } });
+            }}
+          >
+            <IconExport size={12} />
+            <span>SVG</span>
+          </button>
+          <button
+            class="ddd-actions-btn"
+            title="Export diagram as PNG"
+            onClick={() => {
+              const svg = generateSvg(store.getState());
+              svgToPngDataUrl(svg).then((data) => postToHost({ type: 'export:png', payload: { data } }));
+            }}
+          >
+            <IconExport size={12} />
+            <span>PNG</span>
           </button>
         </div>
       ) : null}

@@ -1,6 +1,8 @@
 import { Parser } from '@dbml/core';
 import type {
   Column,
+  ColumnChange,
+  DiagramView,
   ParseError,
   QualifiedName,
   Ref,
@@ -15,14 +17,143 @@ import type {
  * Input: DBML source string.
  * Output: internal Schema (plain-data, postMessage-safe) or ParseError.
  */
-export function parseDbml(source: string): { schema: Schema; error: null } | { schema: null; error: ParseError } {
+export function parseDbmlx(source: string): { schema: Schema; error: null } | { schema: null; error: ParseError } {
+  const { stripped: noViews, views } = extractDiagramViews(source);
+  const { stripped, changes: migrationChanges } = extractMigrationChanges(noViews);
   try {
-    const db = Parser.parse(source, 'dbmlv2');
+    const db = Parser.parse(stripped, 'dbmlv2');
     const exported = db.export() as unknown as ExportedDatabase;
-    return { schema: mapExportedToSchema(exported), error: null };
+    const schema = mapExportedToSchema(exported, migrationChanges);
+    schema.views = views;
+    return { schema, error: null };
   } catch (err) {
     return { schema: null, error: toParseError(err) };
   }
+}
+
+/**
+ * Extracts all DiagramView { } blocks from DBML source and returns the source
+ * with those blocks removed (so @dbml/core doesn't choke on them).
+ */
+function extractDiagramViews(source: string): { stripped: string; views: DiagramView[] } {
+  const views: DiagramView[] = [];
+  // Match DiagramView <name> { ... } — handles nested braces naively (DBML blocks don't nest deeply)
+  const stripped = source.replace(/DiagramView\s+(\w+)\s*\{([^{}]*(?:\{[^}]*\}[^{}]*)*)\}/gi, (_match, name: string, body: string) => {
+    views.push(parseDiagramViewBody(name.trim(), body));
+    return '';
+  });
+  return { stripped, views };
+}
+
+function parseDiagramViewBody(name: string, body: string): DiagramView {
+  const parseSection = (keyword: string): string[] | null => {
+    const re = new RegExp(`${keyword}\\s*\\{([^}]*)\\}`, 'i');
+    const m = body.match(re);
+    if (!m) return null;
+    const content = m[1]!.trim();
+    if (content === '*') return []; // empty array = wildcard (all)
+    return content.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  };
+  return {
+    name,
+    tables: parseSection('Tables'),
+    tableGroups: parseSection('TableGroups'),
+    schemas: parseSection('Schemas'),
+  };
+}
+
+/**
+ * Extracts migration change annotations from DBML source.
+ * Supported syntax inside Table blocks:
+ *   col type [modify: name="new_name", type="new_type"]  — rename / retype
+ *   col type [drop]                                       — column being dropped
+ *   col type [add]                                        — column being added
+ * Strips these annotations before passing to @dbml/core.
+ */
+function extractMigrationChanges(source: string): {
+  stripped: string;
+  changes: Map<string, Map<string, ColumnChange>>;
+} {
+  const changes = new Map<string, Map<string, ColumnChange>>();
+  const lines = source.split('\n');
+  const outLines: string[] = [];
+
+  let braceDepth = 0;
+  let inTable = false;
+  let tableBodyDepth = 0;
+  let currentTableRawName = '';
+
+  const TABLE_OPEN_RE = /^\s*[Tt]able\s+([\w"`.]+(?:\.[\w"`.]+)?)/;
+  const COL_NAME_RE = /^\s+(\w+)\s/;
+  const MODIFY_RE = /\[modify:\s*([^\]]*)\]/i;
+
+  for (const line of lines) {
+    const clean = line.replace(/"[^"]*"|'[^']*'|`[^`]*`|\/\/.*$/g, '');
+    const opens = (clean.match(/\{/g) ?? []).length;
+    const closes = (clean.match(/\}/g) ?? []).length;
+
+    const tableMatch = TABLE_OPEN_RE.exec(line);
+    if (tableMatch && !inTable) {
+      const raw = tableMatch[1]!.replace(/["`.]/g, '');
+      currentTableRawName = raw.includes('.') ? raw.split('.').pop()! : raw;
+      inTable = true;
+      tableBodyDepth = braceDepth + opens;
+      if (!changes.has(currentTableRawName)) changes.set(currentTableRawName, new Map());
+    }
+
+    braceDepth += opens - closes;
+    if (inTable && braceDepth < tableBodyDepth) inTable = false;
+
+    let processedLine = line;
+    if (inTable && braceDepth === tableBodyDepth) {
+      const tableChanges = changes.get(currentTableRawName)!;
+
+      const colName = COL_NAME_RE.exec(line)?.[1];
+      if (colName) {
+        // [modify: name="x", type="y"]
+        const modifyMatch = MODIFY_RE.exec(line);
+        if (modifyMatch) {
+          const body = modifyMatch[1]!;
+          const afterName = /\bname\s*=\s*"([^"]*)"/.exec(body)?.[1];
+          const afterType = /\btype\s*=\s*"([^"]*)"/.exec(body)?.[1];
+          tableChanges.set(colName, { kind: 'modify', afterName, afterType });
+          processedLine = line.replace(/\s*\[modify:\s*[^\]]*\]/i, '').trimEnd();
+          outLines.push(processedLine);
+          continue;
+        }
+
+        // [add] — strip from settings, keep column for @dbml/core
+        const hasAdd = /\[[^\]]*\badd\b[^\]]*\]/i.test(line);
+        if (hasAdd) {
+          tableChanges.set(colName, { kind: 'add' });
+          processedLine = line.replace(/\[([^\]]*)\]/g, (_m, inner: string) => {
+            if (!/\badd\b/i.test(inner)) return _m;
+            const rest = inner.split(',').map((s: string) => s.trim()).filter((s: string) => !/^add$/i.test(s)).join(', ');
+            return rest ? `[${rest}]` : '';
+          }).trimEnd();
+          outLines.push(processedLine);
+          continue;
+        }
+
+        // [drop] — strip from settings, keep column for @dbml/core
+        const hasDrop = /\[[^\]]*\bdrop\b[^\]]*\]/i.test(line);
+        if (hasDrop) {
+          tableChanges.set(colName, { kind: 'drop' });
+          processedLine = line.replace(/\[([^\]]*)\]/g, (_m, inner: string) => {
+            if (!/\bdrop\b/i.test(inner)) return _m;
+            const rest = inner.split(',').map((s: string) => s.trim()).filter((s: string) => !/^drop$/i.test(s)).join(', ');
+            return rest ? `[${rest}]` : '';
+          }).trimEnd();
+          outLines.push(processedLine);
+          continue;
+        }
+      }
+    }
+
+    outLines.push(processedLine);
+  }
+
+  return { stripped: outLines.join('\n'), changes };
 }
 
 function toParseError(err: unknown): ParseError {
@@ -110,7 +241,7 @@ function qualify(schemaName: string | null | undefined, tableName: string): Qual
   return `${s && s.length > 0 ? s : 'public'}.${t}`;
 }
 
-function mapExportedToSchema(db: ExportedDatabase): Schema {
+function mapExportedToSchema(db: ExportedDatabase, migrationChanges: Map<string, Map<string, ColumnChange>>): Schema {
   const tables: Table[] = [];
   const refs: Ref[] = [];
   const groups: TableGroup[] = [];
@@ -133,6 +264,9 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
     for (const t of s.tables ?? []) {
       const cleanName = unquote(t.name);
       const qn = qualify(schemaName, cleanName);
+      const rawChanges = migrationChanges.get(cleanName);
+      const columnChanges: Record<string, ColumnChange> = {};
+      if (rawChanges) for (const [col, change] of rawChanges) columnChanges[col] = change;
       tables.push({
         name: qn,
         schemaName,
@@ -140,6 +274,7 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
         columns: (t.fields ?? []).map(mapField),
         note: t.note || null,
         groupName: tableToGroup.get(qn) ?? null,
+        columnChanges,
       });
     }
 
@@ -152,7 +287,7 @@ function mapExportedToSchema(db: ExportedDatabase): Schema {
   tables.sort((a, b) => a.name.localeCompare(b.name));
   groups.sort((a, b) => a.name.localeCompare(b.name));
 
-  return { tables, refs, groups };
+  return { tables, refs, groups, views: [] };
 }
 
 function mapField(f: ExportedField): Column {

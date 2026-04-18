@@ -1,21 +1,21 @@
 import * as vscode from 'vscode';
-import type { HostToWebview, Layout, ViewportCommand, WebviewToHost, Schema } from '../shared/types';
-import { parseDbml } from './parser';
+import type { HostToWebview, Layout, ViewportCommand, WebviewToHost } from '../shared/types';
 import { emptyLayout, readLayout, sidecarUri, writeLayout } from './layoutStore';
+import type { WorkspaceIndex } from './workspaceIndex';
 
 const PERSIST_DEBOUNCE_MS = 200;
 
 export class DiagramPanel {
   private static panels = new Map<string, DiagramPanel>();
 
-  public static createOrShow(context: vscode.ExtensionContext, dbmlUri: vscode.Uri): void {
+  public static createOrShow(context: vscode.ExtensionContext, dbmlUri: vscode.Uri, index: WorkspaceIndex): void {
     const key = dbmlUri.toString();
     const existing = DiagramPanel.panels.get(key);
     if (existing) {
       existing.reveal();
       return;
     }
-    const panel = new DiagramPanel(context, dbmlUri);
+    const panel = new DiagramPanel(context, dbmlUri, index);
     DiagramPanel.panels.set(key, panel);
   }
 
@@ -37,20 +37,21 @@ export class DiagramPanel {
 
   private readonly webviewPanel: vscode.WebviewPanel;
   private readonly disposables: vscode.Disposable[] = [];
-  private lastValidSchema: Schema = { tables: [], refs: [], groups: [] };
   private currentLayout: Layout = emptyLayout();
   private lastWrittenSerialized: string | null = null;
   private pendingPersist: Layout | null = null;
   private persistTimer: NodeJS.Timeout | null = null;
+  private activeView: string | null = null;
 
   private constructor(
     private readonly context: vscode.ExtensionContext,
     private readonly dbmlUri: vscode.Uri,
+    private readonly index: WorkspaceIndex,
   ) {
     const distRoot = vscode.Uri.joinPath(context.extensionUri, 'dist', 'webview');
     this.webviewPanel = vscode.window.createWebviewPanel(
-      'dddbml.diagram',
-      `dddbml — ${this.shortName(dbmlUri)}`,
+      'dbmlx.diagram',
+      `dbmlx — ${this.shortName(dbmlUri)}`,
       { viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
       {
         enableScripts: true,
@@ -84,16 +85,21 @@ export class DiagramPanel {
     this.post({ type: 'viewport:command', payload: { action } });
   }
 
+  public exportSvg(): void {
+    this.post({ type: 'export:request' });
+  }
+
   public async resetLayout(): Promise<void> {
     this.currentLayout = { ...this.currentLayout, tables: {} };
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
-    void vscode.window.showInformationMessage('dddbml: layout reset — auto-layout will re-run.');
+    void vscode.window.showInformationMessage('dbmlx: layout reset — auto-layout will re-run.');
   }
 
   public async pruneOrphans(): Promise<void> {
-    const liveTables = new Set(this.lastValidSchema.tables.map((t) => t.name));
-    const liveGroups = new Set(this.lastValidSchema.groups.map((g) => g.name));
+    const { schema } = this.index.getResolvedSchema(this.dbmlUri);
+    const liveTables = new Set(schema.tables.map((t) => t.name));
+    const liveGroups = new Set(schema.groups.map((g) => g.name));
     const nextTables: Record<string, { x: number; y: number }> = {};
     for (const [k, v] of Object.entries(this.currentLayout.tables)) {
       if (liveTables.has(k)) nextTables[k] = v;
@@ -107,7 +113,7 @@ export class DiagramPanel {
     this.currentLayout = { ...this.currentLayout, tables: nextTables, groups: nextGroups };
     await this.flushPersist(this.currentLayout);
     this.post({ type: 'layout:loaded', payload: this.currentLayout });
-    void vscode.window.showInformationMessage(`dddbml: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s).`);
+    void vscode.window.showInformationMessage(`dbmlx: pruned ${removedTables} orphan table(s), ${removedGroups} orphan group(s).`);
   }
 
   public dispose(): void {
@@ -138,11 +144,23 @@ export class DiagramPanel {
       case 'command:pruneOrphans':
         void this.pruneOrphans();
         return;
+      case 'command:resetLayout':
+        void this.resetLayout();
+        return;
       case 'command:reveal':
         void this.revealTable(msg.payload.tableName);
         return;
       case 'error:log':
-        console.error('[dddbml webview]', msg.payload.message, msg.payload.stack);
+        console.error('[dbmlx webview]', msg.payload.message, msg.payload.stack);
+        return;
+      case 'export:svg':
+        void this.saveSvg(msg.payload.svg);
+        return;
+      case 'export:png':
+        void this.savePng(msg.payload.data);
+        return;
+      case 'view:switch':
+        void this.onViewSwitch(msg.payload.view);
         return;
       default:
         return;
@@ -168,7 +186,7 @@ export class DiagramPanel {
         if (s === schema && t === tableName) { lineIdx = i; break; }
       }
       if (lineIdx < 0) {
-        void vscode.window.showWarningMessage(`dddbml: could not find "${qualifiedName}" in source.`);
+        void vscode.window.showWarningMessage(`dbmlx: could not find "${qualifiedName}" in source.`);
         return;
       }
       const pos = new vscode.Position(lineIdx, 0);
@@ -179,46 +197,40 @@ export class DiagramPanel {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      void vscode.window.showErrorMessage(`dddbml: reveal failed — ${message}`);
+      void vscode.window.showErrorMessage(`dbmlx: reveal failed — ${message}`);
     }
   }
 
   private async hydrate(): Promise<void> {
-    // Send layout first so that when the schema arrives, positions are already in the
-    // store and the auto-layout effect skips tables that already have a saved position.
+    // Send layout first so positions are in the store before schema triggers auto-layout.
     await this.sendLayout();
-    await this.sendSchema();
+    this.sendSchema();
     this.post({ type: 'theme:change', payload: { kind: this.currentThemeKind() } });
   }
 
-  private async sendSchema(): Promise<void> {
-    try {
-      const bytes = await vscode.workspace.fs.readFile(this.dbmlUri);
-      const source = new TextDecoder('utf-8').decode(bytes);
-      const result = parseDbml(source);
-      if (result.error) {
-        this.post({
-          type: 'schema:update',
-          payload: { schema: this.lastValidSchema, parseError: result.error },
-        });
-      } else {
-        this.lastValidSchema = result.schema;
-        this.post({
-          type: 'schema:update',
-          payload: { schema: result.schema, parseError: null },
-        });
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.post({
-        type: 'schema:update',
-        payload: { schema: this.lastValidSchema, parseError: { message } },
-      });
-    }
+  private sendSchema(): void {
+    const { schema, errors } = this.index.getResolvedSchema(this.dbmlUri);
+    // Surface the first error from the root file or any include
+    const rootError = errors.get(this.dbmlUri.toString())?.error ?? null;
+    const firstError = rootError ?? (errors.size > 0 ? [...errors.values()][0]!.error : null);
+    this.post({ type: 'schema:update', payload: { schema, parseError: firstError } });
+  }
+
+  private async onViewSwitch(view: string | null): Promise<void> {
+    await this.flushPendingNow();
+    this.activeView = view;
+    await this.sendLayout();
+  }
+
+  private async flushPendingNow(): Promise<void> {
+    if (this.persistTimer) { clearTimeout(this.persistTimer); this.persistTimer = null; }
+    const next = this.pendingPersist;
+    this.pendingPersist = null;
+    if (next) await this.flushPersist(next);
   }
 
   private async sendLayout(isExternal = false): Promise<void> {
-    this.currentLayout = await readLayout(this.dbmlUri);
+    this.currentLayout = await readLayout(this.dbmlUri, this.activeView);
     this.post({
       type: isExternal ? 'layout:external-change' : 'layout:loaded',
       payload: this.currentLayout,
@@ -245,32 +257,63 @@ export class DiagramPanel {
 
   private async flushPersist(layout: Layout): Promise<void> {
     try {
-      const serialized = await writeLayout(this.dbmlUri, layout);
+      const serialized = await writeLayout(this.dbmlUri, layout, this.activeView);
       this.lastWrittenSerialized = serialized;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      void vscode.window.showErrorMessage(`dddbml: failed to write layout file — ${message}`);
+      void vscode.window.showErrorMessage(`dbmlx: failed to write layout file — ${message}`);
     }
   }
 
-  private setupWatchers(): void {
-    const parentUri = vscode.Uri.joinPath(this.dbmlUri, '..');
-    const dbmlName = this.shortName(this.dbmlUri);
-    const layoutSidecar = sidecarUri(this.dbmlUri);
-    const layoutName = this.shortName(layoutSidecar);
-
-    const dbmlWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(parentUri, dbmlName),
+  private async savePng(dataUrl: string): Promise<void> {
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    const bytes = Uint8Array.from(Buffer.from(base64, 'base64'));
+    const defaultUri = vscode.Uri.joinPath(
+      this.dbmlUri,
+      '..',
+      this.shortName(this.dbmlUri).replace(/\.dbmlx$/i, '.png'),
     );
-    dbmlWatcher.onDidChange((uri) => {
-      if (uri.toString() === this.dbmlUri.toString()) void this.sendSchema();
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri,
+      filters: { 'PNG Image': ['png'] },
+      title: 'Export diagram as PNG',
     });
+    if (!uri) return;
+    await vscode.workspace.fs.writeFile(uri, bytes);
+    void vscode.window.showInformationMessage(`dbmlx: diagram exported to ${this.shortName(uri)}`);
+  }
 
+  private async saveSvg(svg: string): Promise<void> {
+    const defaultUri = vscode.Uri.joinPath(
+      this.dbmlUri,
+      '..',
+      this.shortName(this.dbmlUri).replace(/\.dbmlx$/i, '.svg'),
+    );
+    const uri = await vscode.window.showSaveDialog({
+      defaultUri,
+      filters: { 'SVG Image': ['svg'] },
+      title: 'Export diagram as SVG',
+    });
+    if (!uri) return;
+    await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(svg));
+    void vscode.window.showInformationMessage(`dbmlx: diagram exported to ${this.shortName(uri)}`);
+  }
+
+  private setupWatchers(): void {
+    // Re-send schema whenever any .dbmlx file in the index changes (includes may affect us)
+    this.disposables.push(
+      this.index.onChange(() => this.sendSchema()),
+    );
+
+    // Watch layout sidecar for external changes (git pull, etc.)
+    const parentUri = vscode.Uri.joinPath(this.dbmlUri, '..');
+    const schemaBasename = this.shortName(this.dbmlUri);
     const layoutWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(parentUri, layoutName),
+      new vscode.RelativePattern(parentUri, `${schemaBasename}*.layout.json`),
     );
     const onLayoutFs = async (uri: vscode.Uri) => {
-      if (uri.toString() !== layoutSidecar.toString()) return;
+      const currentSidecar = sidecarUri(this.dbmlUri, this.activeView);
+      if (uri.toString() !== currentSidecar.toString()) return;
       try {
         const bytes = await vscode.workspace.fs.readFile(uri);
         const text = new TextDecoder('utf-8').decode(bytes);
@@ -282,8 +325,7 @@ export class DiagramPanel {
     };
     layoutWatcher.onDidChange(onLayoutFs);
     layoutWatcher.onDidCreate(onLayoutFs);
-
-    this.disposables.push(dbmlWatcher, layoutWatcher);
+    this.disposables.push(layoutWatcher);
   }
 
   private currentThemeKind(): 'light' | 'dark' {
@@ -318,7 +360,7 @@ export class DiagramPanel {
 <meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="${csp}" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>dddbml</title>
+<title>dbmlx</title>
 <style>
   html, body, #root { height: 100%; margin: 0; padding: 0; overflow: hidden; }
   body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); }

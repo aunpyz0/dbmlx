@@ -56,6 +56,15 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
   const refById = new Map<string, Ref>();
   for (const r of refs) refById.set(r.id, r);
 
+  // Track occupied label slots (bucketed to 10px grid) so colliding labels go below instead of above.
+  const usedLabelSlots = new Set<string>();
+  const labelY = (x: number, y: number): number => {
+    const key = `${Math.round(x / 4)},${Math.round(y / 10)}`;
+    if (usedLabelSlots.has(key)) return y + 12;
+    usedLabelSlots.add(key);
+    return y - 5;
+  };
+
   return (
     <svg
       class="ddd-edges"
@@ -69,31 +78,39 @@ export function EdgeLayer({ refs, positions, tablesByName, groupSizes, worldBbox
       }}
     >
       <defs>
-        <marker id="ddd-mk-many" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-          <path d="M2,2 L10,6 L2,10 M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.2" />
+        <marker id="ddd-mk-many" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+          <path d="M2,2 L10,6 L2,10 M10,2 L10,10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
         </marker>
-        <marker id="ddd-mk-one" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-          <path d="M10,2 L10,10" fill="none" stroke="currentColor" stroke-width="1.4" />
+        <marker id="ddd-mk-one" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+          <path d="M10,2 L10,10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         </marker>
-        <marker id="ddd-mk-many-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-          <path d="M10,2 L2,6 L10,10 M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.2" />
+        <marker id="ddd-mk-many-s" viewBox="0 0 12 12" refX="2" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+          <path d="M10,2 L2,6 L10,10 M2,2 L2,10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
         </marker>
-        <marker id="ddd-mk-one-s" viewBox="0 0 12 12" refX="1" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto">
-          <path d="M2,2 L2,10" fill="none" stroke="currentColor" stroke-width="1.4" />
+        <marker id="ddd-mk-one-s" viewBox="0 0 12 12" refX="2" refY="6" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto" overflow="visible">
+          <path d="M2,2 L2,10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
         </marker>
       </defs>
       {routes.map((r) => {
         const ref = refById.get(r.id);
         const startMarker = ref?.source.relation === '*' ? 'url(#ddd-mk-many-s)' : 'url(#ddd-mk-one-s)';
         const endMarker = ref?.target.relation === '*' ? 'url(#ddd-mk-many)' : 'url(#ddd-mk-one)';
+        const srcLabel = ref?.source.relation === '*' ? 'N' : '1';
+        const tgtLabel = ref?.target.relation === '*' ? 'N' : '1';
+        const srcLabelX = r.source.x + (r.source.side === 'right' ? 16 : -16);
+        const tgtLabelX = r.target.x + (r.target.side === 'right' ? 16 : -16);
+        const srcLabelY = labelY(srcLabelX, r.source.y);
+        const tgtLabelY = labelY(tgtLabelX, r.target.y);
         return (
           <g key={r.id}>
             <path
               d={r.d}
               class="ddd-edge"
-              marker-start={startMarker}
-              marker-end={endMarker}
+              markerStart={startMarker}
+              markerEnd={endMarker}
             />
+            <text class="ddd-edge-label" x={srcLabelX} y={srcLabelY}>{srcLabel}</text>
+            <text class="ddd-edge-label" x={tgtLabelX} y={tgtLabelY}>{tgtLabel}</text>
             {r.midSeg ? (
               <line
                 class="ddd-edge-handle"

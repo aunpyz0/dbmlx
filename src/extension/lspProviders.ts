@@ -1,0 +1,673 @@
+import * as vscode from 'vscode';
+import * as nodePath from 'path';
+import type { WorkspaceIndex } from './workspaceIndex';
+import type { Table } from '../shared/types';
+import { DbmlxFormattingProvider } from './formatter';
+
+const INCLUDE_LINE_RE = /^(?:\/\/|!)include\s+"([^"]*)"/;
+const INCLUDE_PREFIX_RE = /^(?:\/\/|!)include\s+"([^"]*)$/;
+
+// ── Hover docs ─────────────────────────────────────────────────────────────
+
+const KEYWORD_HOVER: Record<string, { title: string; body: string }> = {
+  table: {
+    title: 'Table',
+    body: 'Defines a database table.\n\n```dbmlx\nTable table_name [as alias] {\n  column_name type [settings]\n  indexes { ... }\n  Note: \'description\'\n}\n```',
+  },
+  ref: {
+    title: 'Ref',
+    body: 'Defines a foreign-key relationship.\n\n```dbmlx\nRef: a.col > b.col   // many-to-one\nRef: a.col < b.col   // one-to-many\nRef: a.col - b.col   // one-to-one\nRef: a.col <> b.col  // many-to-many\n```\n\nSupports `delete` / `update` actions: `cascade`, `restrict`, `set null`, `set default`, `no action`.',
+  },
+  enum: {
+    title: 'Enum',
+    body: 'Defines an enumerated type.\n\n```dbmlx\nEnum job_status {\n  created\n  running\n  done [note: \'Completed\']\n  failure\n}\n```',
+  },
+  tablegroup: {
+    title: 'TableGroup',
+    body: 'Groups tables into a bounded context (DDD aggregate).\n\n```dbmlx\nTableGroup billing {\n  orders\n  invoices\n}\n```',
+  },
+  diagramview: {
+    title: 'DiagramView',
+    body: 'Defines a named, filterable view of the diagram.\n\n```dbmlx\nDiagramView my_view {\n  Tables { table1, table2 }\n  TableGroups { billing }\n  Schemas { public }\n}\n```\n\nUse `*` as a wildcard to include everything on that axis. Omit an axis to exclude it entirely. Multiple axes combine with OR logic.',
+  },
+  project: {
+    title: 'Project',
+    body: 'Project-level metadata block.\n\n```dbmlx\nProject my_app {\n  database_type: \'PostgreSQL\'\n  Note: \'Description\'\n}\n```',
+  },
+  indexes: {
+    title: 'indexes',
+    body: 'Defines indexes for the enclosing table.\n\n```dbmlx\nindexes {\n  col                         // simple index\n  (col1, col2)                // composite\n  col [unique]                // unique\n  col [type: hash]            // hash index\n  col [name: \'idx_name\', pk]  // named / primary\n  `lower(name)` [type: btree] // expression index\n}\n```',
+  },
+  note: {
+    title: 'note / Note',
+    body: 'Attaches a human-readable description.\n\n```dbmlx\nNote: \'Table-level note\'\n// or in column settings:\nid int [note: \'Primary identifier\']\n```',
+  },
+};
+
+const SETTING_HOVER: Record<string, { title: string; body: string }> = {
+  pk: {
+    title: 'pk — Primary Key',
+    body: 'Marks the column as the primary key. Implies `not null` and `unique`.',
+  },
+  'primary key': {
+    title: 'primary key — Primary Key (verbose)',
+    body: 'Marks the column as the primary key. Implies `not null` and `unique`.',
+  },
+  'not null': {
+    title: 'not null',
+    body: 'The column cannot contain `NULL` values.',
+  },
+  null: {
+    title: 'null',
+    body: 'The column allows `NULL` values (permissive; this is the default in most databases).',
+  },
+  unique: {
+    title: 'unique',
+    body: 'All values in this column must be unique across rows.',
+  },
+  increment: {
+    title: 'increment',
+    body: 'Auto-increment (serial) — the database automatically assigns a monotonically increasing value.',
+  },
+  default: {
+    title: 'default',
+    body: 'Fallback value used when no value is supplied on `INSERT`.\n\nAccepts: numbers, strings (`\'text\'`), expressions (`` `now()` ``), `true`, `false`, `null`.',
+  },
+  ref: {
+    title: 'ref — Inline Reference',
+    body: 'Declares a foreign-key relationship inline.\n\n```dbmlx\ncol int [ref: > other_table.col]\n```\n\n`>` many-to-one · `<` one-to-many · `-` one-to-one · `<>` many-to-many',
+  },
+};
+
+const INDEX_SETTING_HOVER: Record<string, { title: string; body: string }> = {
+  unique: { title: 'unique index', body: 'Creates a unique index — no two rows may have the same value(s) for the indexed column(s).' },
+  pk: { title: 'pk — Primary Key index', body: 'Marks the index as the table\'s primary key.' },
+  name: { title: 'name', body: 'Assigns an explicit name to the index.\n\n```dbmlx\ncol [name: \'idx_orders_created_at\']\n```' },
+  type: { title: 'type', body: 'Index access method.\n\n- `btree` — balanced tree, supports range queries (default)\n- `hash` — equality lookups only, faster for `=`' },
+  note: { title: 'note', body: 'Human-readable description for the index.' },
+};
+
+// ── Hover ──────────────────────────────────────────────────────────────────
+
+class DbmlxHoverProvider implements vscode.HoverProvider {
+  constructor(private readonly index: WorkspaceIndex) {}
+
+  provideHover(doc: vscode.TextDocument, pos: vscode.Position): vscode.Hover | undefined {
+    const lineText = doc.lineAt(pos).text;
+    const linePrefix = lineText.substring(0, pos.character);
+
+    // ── !include hover ──────────────────────────────────────────────────────
+    const incMatch = INCLUDE_LINE_RE.exec(lineText);
+    if (incMatch) {
+      const openQuote = lineText.indexOf('"');
+      const closeQuote = lineText.indexOf('"', openQuote + 1);
+      const col = pos.character;
+
+      if (col < openQuote) {
+        // Hovering the `!include` keyword
+        const md = new vscode.MarkdownString();
+        md.appendMarkdown('**!include**\n\nIncludes another dbmlx file into this schema.\n\n```dbmlx\n!include "relative/path/to/file.dbmlx"\n```\n\nAll tables, refs, and enums from the target file are merged into the combined schema.');
+        return new vscode.Hover(md, new vscode.Range(pos.line, 0, pos.line, openQuote - 1));
+      }
+
+      if (col >= openQuote && col <= closeQuote) {
+        // Hovering the file path
+        const relPath = incMatch[1]!;
+        const targetUri = vscode.Uri.joinPath(doc.uri, '..', relPath);
+        const tables = this.index.getTablesInFile(targetUri);
+        const md = new vscode.MarkdownString();
+        md.isTrusted = true;
+        md.appendMarkdown(`**${relPath}**`);
+        if (tables.length > 0) {
+          md.appendMarkdown(`\n\n${tables.length} table${tables.length !== 1 ? 's' : ''}: ${tables.map(t => `\`${t.name}\``).join(', ')}`);
+        }
+        md.appendMarkdown(`\n\n[Open file](${targetUri.toString()})`);
+        return new vscode.Hover(md, new vscode.Range(pos.line, openQuote + 1, pos.line, closeQuote));
+      }
+    }
+
+    // ── keyword hover ───────────────────────────────────────────────────────
+    const wordRange = doc.getWordRangeAtPosition(pos, /[\w.]+/);
+    if (wordRange) {
+      const word = doc.getText(wordRange).toLowerCase();
+
+      // "not null" / "not" before "null"
+      if (word === 'not') {
+        const after = lineText.substring(wordRange.end.character);
+        if (/^\s+null\b/i.test(after)) {
+          const info = SETTING_HOVER['not null']!;
+          return this.keywordHover(info.title, info.body, wordRange);
+        }
+      }
+      // "primary key" / "primary" before "key"
+      if (word === 'primary') {
+        const after = lineText.substring(wordRange.end.character);
+        if (/^\s+key\b/i.test(after)) {
+          const info = SETTING_HOVER['primary key']!;
+          return this.keywordHover(info.title, info.body, wordRange);
+        }
+      }
+
+      // Inside [...] → column or index settings
+      if (/\[[^\]]*$/.test(linePrefix)) {
+        // Distinguish index settings vs column settings by checking broader context
+        const insideIndexBlock = this.getContext(doc, pos).block === 'indexes';
+        const settingMap = insideIndexBlock ? INDEX_SETTING_HOVER : SETTING_HOVER;
+        const info = settingMap[word];
+        if (info) return this.keywordHover(info.title, info.body, wordRange);
+      }
+
+      // Top-level keyword
+      const kwInfo = KEYWORD_HOVER[word];
+      if (kwInfo) return this.keywordHover(kwInfo.title, kwInfo.body, wordRange);
+    }
+
+    // ── table hover (existing) ──────────────────────────────────────────────
+    if (!wordRange) return;
+    const word = doc.getText(wordRange);
+    const table = this.resolveTable(word);
+    if (!table) return;
+    return new vscode.Hover(this.tableMarkdown(table), wordRange);
+  }
+
+  private keywordHover(title: string, body: string, range: vscode.Range): vscode.Hover {
+    const md = new vscode.MarkdownString();
+    md.appendMarkdown(`**${title}**\n\n${body}`);
+    md.isTrusted = true;
+    return new vscode.Hover(md, range);
+  }
+
+  private tableMarkdown(table: Table): vscode.MarkdownString {
+    const md = new vscode.MarkdownString();
+    md.appendMarkdown(`**Table** \`${table.name}\``);
+    if (table.note) md.appendMarkdown(`\n\n*${table.note}*`);
+    md.appendMarkdown('\n\n| Column | Type | Constraints |\n|--------|------|-------------|\n');
+    for (const col of table.columns) {
+      const constraints = [
+        col.pk ? 'PK' : '',
+        col.notNull ? 'NOT NULL' : '',
+        col.unique ? 'UNIQUE' : '',
+        col.increment ? 'AUTOINCREMENT' : '',
+      ].filter(Boolean).join(', ');
+      md.appendMarkdown(`| \`${col.name}\` | \`${col.type}\` | ${constraints} |\n`);
+    }
+    return md;
+  }
+
+  private resolveTable(word: string): Table | undefined {
+    const candidates: string[] = [word];
+    if (word.includes('.')) {
+      const parts = word.split('.');
+      candidates.push(parts.slice(0, -1).join('.'));
+      candidates.push(parts[0]!);
+    }
+    for (const c of candidates) {
+      const t = this.index.getTable(c) ?? this.index.getTable(`public.${c}`);
+      if (t) return t;
+    }
+    return undefined;
+  }
+
+  // Thin wrapper reused from completion provider
+  private getContext(doc: vscode.TextDocument, pos: vscode.Position): BlockContext {
+    return getContext(doc, pos);
+  }
+}
+
+// ── Document Symbols ───────────────────────────────────────────────────────
+
+class DbmlxDocumentSymbolProvider implements vscode.DocumentSymbolProvider {
+  constructor(private readonly index: WorkspaceIndex) {}
+
+  provideDocumentSymbols(doc: vscode.TextDocument): vscode.DocumentSymbol[] {
+    return this.index.getTablesInFile(doc.uri).map(({ name, line }) => {
+      const table = this.index.getTable(name);
+      const range = new vscode.Range(line, 0, line, doc.lineAt(line).text.length);
+      const sym = new vscode.DocumentSymbol(
+        name,
+        table ? `${table.columns.length} columns` : '',
+        vscode.SymbolKind.Class,
+        range,
+        range,
+      );
+      if (table) {
+        sym.children = table.columns.map((col) => {
+          const colSym = new vscode.DocumentSymbol(
+            col.name,
+            col.type,
+            col.pk ? vscode.SymbolKind.Key : vscode.SymbolKind.Field,
+            range,
+            range,
+          );
+          return colSym;
+        });
+      }
+      return sym;
+    });
+  }
+}
+
+// ── Go-to-Definition ───────────────────────────────────────────────────────
+
+class DbmlxDefinitionProvider implements vscode.DefinitionProvider {
+  constructor(private readonly index: WorkspaceIndex) {}
+
+  provideDefinition(doc: vscode.TextDocument, pos: vscode.Position): vscode.Location | undefined {
+    // !include "file.dbmlx" → open the file
+    const incMatch = INCLUDE_LINE_RE.exec(doc.lineAt(pos).text);
+    if (incMatch) {
+      const targetUri = vscode.Uri.joinPath(doc.uri, '..', incMatch[1]!);
+      return new vscode.Location(targetUri, new vscode.Position(0, 0));
+    }
+
+    const wordRange = doc.getWordRangeAtPosition(pos, /[\w.]+/);
+    if (!wordRange) return;
+    const word = doc.getText(wordRange);
+
+    const candidates: string[] = [word];
+    if (word.includes('.')) candidates.push(word.split('.')[0]!);
+
+    for (const c of candidates) {
+      const loc = this.index.getTableLocation(c) ?? this.index.getTableLocation(`public.${c}`);
+      if (loc) return new vscode.Location(loc.uri, new vscode.Position(loc.line, 0));
+    }
+    return undefined;
+  }
+}
+
+// ── Completion data ────────────────────────────────────────────────────────
+
+type BlockKind = 'table' | 'ref' | 'tablegroup' | 'enum' | 'project' | 'indexes' | 'diagramview' | 'diagramview-tables' | 'diagramview-tablegroups' | 'diagramview-schemas' | 'none';
+
+interface BlockContext {
+  block: BlockKind;
+  parentTable?: string;
+}
+
+const SQL_TYPES = [
+  'int', 'integer', 'bigint', 'smallint', 'tinyint',
+  'varchar(255)', 'varchar(100)', 'varchar(50)', 'char(1)',
+  'text', 'longtext', 'mediumtext',
+  'boolean', 'bool',
+  'float', 'double', 'real', 'decimal(10,2)', 'numeric(10,2)',
+  'date', 'datetime', 'timestamp', 'time',
+  'uuid', 'json', 'jsonb',
+  'blob', 'bytea', 'binary',
+  'serial', 'bigserial',
+];
+
+const COLUMN_SETTINGS: Array<{ label: string; doc: string; kind?: vscode.CompletionItemKind }> = [
+  { label: 'pk', doc: 'Primary key — uniquely identifies each row.' },
+  { label: 'primary key', doc: 'Primary key (verbose form).' },
+  { label: 'not null', doc: 'Column cannot contain NULL values.' },
+  { label: 'null', doc: 'Column allows NULL values.' },
+  { label: 'unique', doc: 'All values must be unique across rows.' },
+  { label: 'increment', doc: 'Auto-increment (serial).' },
+  { label: 'default: ', doc: 'Default value on INSERT.', kind: vscode.CompletionItemKind.Property },
+  { label: 'note: ', doc: 'Column note/comment.', kind: vscode.CompletionItemKind.Property },
+  { label: 'ref: ', doc: 'Inline foreign-key reference.', kind: vscode.CompletionItemKind.Reference },
+];
+
+const INDEX_SETTINGS: Array<{ label: string; doc: string; kind?: vscode.CompletionItemKind }> = [
+  { label: 'unique', doc: 'Unique index — no duplicate values.' },
+  { label: 'pk', doc: 'Primary key index.' },
+  { label: 'name: ', doc: 'Explicit index name.', kind: vscode.CompletionItemKind.Property },
+  { label: 'type: btree', doc: 'B-tree index (default). Supports range queries.', kind: vscode.CompletionItemKind.EnumMember },
+  { label: 'type: hash', doc: 'Hash index. Optimised for equality lookups only.', kind: vscode.CompletionItemKind.EnumMember },
+  { label: 'note: ', doc: 'Index note/comment.', kind: vscode.CompletionItemKind.Property },
+];
+
+const TOPLEVEL_SNIPPETS: Array<{ label: string; snippet: string; doc: string }> = [
+  { label: 'Table', snippet: 'Table ${1:name} {\n\t$0\n}', doc: 'Define a database table.' },
+  { label: 'Ref', snippet: 'Ref: ${1:table.column} ${2|>,<,<>,-|} ${3:table.column}', doc: 'Define a relationship (inline).' },
+  { label: 'Enum', snippet: 'Enum ${1:name} {\n\t$0\n}', doc: 'Define an enum type.' },
+  { label: 'TableGroup', snippet: 'TableGroup ${1:name} {\n\t$0\n}', doc: 'Group tables into a bounded context.' },
+  { label: 'Project', snippet: 'Project ${1:name} {\n\tdatabase_type: \'$1\'\n\t$0\n}', doc: 'Project-level metadata.' },
+  { label: 'DiagramView', snippet: 'DiagramView ${1:name} {\n\tTables { * }\n}', doc: 'Define a named filterable view of the diagram.' },
+];
+
+const REF_OPERATORS: Array<{ label: string; doc: string }> = [
+  { label: '>', doc: 'Many-to-one — current → referenced' },
+  { label: '<', doc: 'One-to-many — current ← referenced' },
+  { label: '<>', doc: 'Many-to-many' },
+  { label: '-', doc: 'One-to-one' },
+];
+
+// ── Block context helper (shared by hover + completion) ────────────────────
+
+function getContext(doc: vscode.TextDocument, pos: vscode.Position): BlockContext {
+  let depth = 0;
+  let firstKind: BlockKind = 'none';
+  let firstFound = false;
+
+  for (let i = pos.line; i >= 0; i--) {
+    const raw =
+      i === pos.line ? doc.lineAt(i).text.substring(0, pos.character) : doc.lineAt(i).text;
+    // Strip strings and line comments before counting braces
+    const text = raw.replace(/"[^"]*"|'[^']*'|\/\/.*$/g, '');
+
+    for (let j = text.length - 1; j >= 0; j--) {
+      if (text[j] === '}') {
+        depth++;
+      } else if (text[j] === '{') {
+        if (depth > 0) {
+          depth--;
+        } else {
+          // depth === 0: this is an enclosing block opening
+          const blockLine = doc.lineAt(i).text.trim().toLowerCase();
+          const kind = classifyBlockLine(blockLine);
+
+          if (!firstFound) {
+            firstFound = true;
+            if (kind !== 'indexes' && !isDiagramViewSection(kind)) {
+              const parentTable = extractTableName(doc.lineAt(i).text);
+              return { block: kind, parentTable };
+            }
+            // indexes and diagramview-* blocks: continue scanning for the parent block
+            firstKind = kind;
+          } else {
+            const parentTable = extractTableName(doc.lineAt(i).text);
+            return { block: firstKind, parentTable };
+          }
+        }
+      }
+    }
+  }
+  return { block: 'none' };
+}
+
+function classifyBlockLine(trimmedLower: string): BlockKind {
+  if (/^table\b/.test(trimmedLower)) return 'table';
+  if (/^ref\b/.test(trimmedLower)) return 'ref';
+  if (/^tablegroup\b/.test(trimmedLower)) return 'tablegroup';
+  if (/^enum\b/.test(trimmedLower)) return 'enum';
+  if (/^project\b/.test(trimmedLower)) return 'project';
+  if (/^indexes\b/.test(trimmedLower)) return 'indexes';
+  if (/^diagramview\b/.test(trimmedLower)) return 'diagramview';
+  if (/^tables\s*\{/.test(trimmedLower)) return 'diagramview-tables';
+  if (/^tablegroups\s*\{/.test(trimmedLower)) return 'diagramview-tablegroups';
+  if (/^schemas\s*\{/.test(trimmedLower)) return 'diagramview-schemas';
+  return 'none';
+}
+
+function isDiagramViewSection(k: BlockKind): k is 'diagramview-tables' | 'diagramview-tablegroups' | 'diagramview-schemas' {
+  return k === 'diagramview-tables' || k === 'diagramview-tablegroups' || k === 'diagramview-schemas';
+}
+
+function extractTableName(lineText: string): string | undefined {
+  return /^table\s+([\w."]+)/i.exec(lineText.trim())?.[1];
+}
+
+// ── Completion ──────────────────────────────────────────────────────────────
+
+class DbmlxCompletionProvider implements vscode.CompletionItemProvider {
+  constructor(private readonly index: WorkspaceIndex) {}
+
+  async provideCompletionItems(doc: vscode.TextDocument, pos: vscode.Position): Promise<vscode.CompletionItem[]> {
+    const linePrefix = doc.lineAt(pos).text.substring(0, pos.character);
+    const uri = doc.uri;
+
+    // 0a. Inside !include "..." → suggest .dbmlx file paths
+    if (INCLUDE_PREFIX_RE.test(linePrefix)) {
+      return this.includePathItems(doc);
+    }
+
+    // 0b. `!` or `!i` at start of line → offer !include snippet
+    if (/^!i?\w*$/.test(linePrefix)) {
+      const item = new vscode.CompletionItem('!include', vscode.CompletionItemKind.Module);
+      item.insertText = new vscode.SnippetString('!include "$0"');
+      item.documentation = 'Include another dbmlx file into this schema.';
+      item.sortText = '0_include';
+      item.command = { command: 'editor.action.triggerSuggest', title: 'Suggest files' };
+      // Replace the `!` already typed so we don't produce `!!include`
+      item.range = new vscode.Range(pos.line, linePrefix.indexOf('!'), pos.line, pos.character);
+      return [item];
+    }
+
+    // 1. After `word.` → column names of that table
+    const dotMatch = /(\w+)\.$/.exec(linePrefix);
+    if (dotMatch) {
+      const table =
+        this.index.getTable(dotMatch[1]!) ?? this.index.getTable(`public.${dotMatch[1]!}`);
+      if (table) {
+        return table.columns.map((col) => {
+          const item = new vscode.CompletionItem(col.name, vscode.CompletionItemKind.Field);
+          item.detail = col.type;
+          item.documentation = [
+            col.pk ? 'PRIMARY KEY' : '',
+            col.notNull ? 'NOT NULL' : '',
+            col.unique ? 'UNIQUE' : '',
+          ]
+            .filter(Boolean)
+            .join(', ');
+          return item;
+        });
+      }
+    }
+
+    const { block, parentTable } = getContext(doc, pos);
+
+    // 2. Inside `[...]`
+    if (/\[[^\]]*$/.test(linePrefix)) {
+      // After `type:` inside an index settings bracket → index type values
+      if (block === 'indexes' && /\btype\s*:\s*\w*$/.test(linePrefix)) {
+        return [
+          this.makeItem('btree', 'B-tree (default) — range queries', vscode.CompletionItemKind.EnumMember),
+          this.makeItem('hash', 'Hash — equality lookups only', vscode.CompletionItemKind.EnumMember),
+        ];
+      }
+      const settings = block === 'indexes' ? INDEX_SETTINGS : COLUMN_SETTINGS;
+      return settings.map(({ label, doc, kind }) => {
+        const item = new vscode.CompletionItem(label, kind ?? vscode.CompletionItemKind.Keyword);
+        item.documentation = doc;
+        return item;
+      });
+    }
+
+    // 3. Inside indexes block
+    if (block === 'indexes') {
+      const table = parentTable
+        ? (this.index.getTable(parentTable) ?? this.index.getTable(`public.${parentTable}`))
+        : undefined;
+      return [
+        // Column names from the parent table
+        ...(table?.columns.map((col) => {
+          const item = new vscode.CompletionItem(col.name, vscode.CompletionItemKind.Field);
+          item.detail = col.type;
+          item.documentation = 'Index this column';
+          return item;
+        }) ?? []),
+        // indexes sub-keyword
+        ...[
+          { label: 'indexes', snippet: 'indexes {\n\t$0\n}', doc: 'Add an indexes block' },
+        ].map(({ label, snippet, doc }) => {
+          const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Keyword);
+          item.insertText = new vscode.SnippetString(snippet);
+          item.documentation = doc;
+          return item;
+        }),
+      ];
+    }
+
+    // 4. Inside Table block at type position: `  colName <cursor>`
+    if (block === 'table' && /^\s+\w+\s+\w*$/.test(linePrefix)) {
+      return SQL_TYPES.map((t, i) => {
+        const item = new vscode.CompletionItem(t, vscode.CompletionItemKind.TypeParameter);
+        item.sortText = String(i).padStart(4, '0');
+        return item;
+      });
+    }
+
+    // 5. Inside Table block at start of line → also offer `indexes` and `Note`
+    if (block === 'table' && /^\s*\w*$/.test(linePrefix)) {
+      return [
+        ...['indexes', 'Note'].map((kw) => {
+          const item = new vscode.CompletionItem(kw, vscode.CompletionItemKind.Keyword);
+          if (kw === 'indexes') item.insertText = new vscode.SnippetString('indexes {\n\t$0\n}');
+          if (kw === 'Note') item.insertText = new vscode.SnippetString("Note: '$0'");
+          return item;
+        }),
+      ];
+    }
+
+    // 6. Inside Ref block or inline `Ref:` line → table.column + operators
+    const isRefLine = /(?:^|\s)ref\s*(?:\w+\s*)?:\s*/i.test(linePrefix);
+    if (block === 'ref' || isRefLine) {
+      return this.refCompletions(linePrefix, uri);
+    }
+
+    // 7. Inside TableGroup → table names
+    if (block === 'tablegroup') {
+      return this.tableNameItems(uri);
+    }
+
+    // 7b. Inside DiagramView block → sub-section snippets
+    if (block === 'diagramview' && /^\s*\w*$/.test(linePrefix)) {
+      return [
+        this.makeSnippetItem('Tables', 'Tables {\n\t$0\n}', 'Filter by table names. Use * for all.'),
+        this.makeSnippetItem('TableGroups', 'TableGroups {\n\t$0\n}', 'Filter by table group names. Use * for all.'),
+        this.makeSnippetItem('Schemas', 'Schemas {\n\t$0\n}', 'Filter by schema names. Use * for all.'),
+      ];
+    }
+
+    // 7c. Inside DiagramView Tables { } → table names + wildcard
+    if (block === 'diagramview-tables') {
+      const wildcard = new vscode.CompletionItem('*', vscode.CompletionItemKind.Value);
+      wildcard.documentation = 'Include all tables.';
+      return [wildcard, ...this.tableNameItems(uri)];
+    }
+
+    // 7d. Inside DiagramView TableGroups { } → group names + wildcard
+    if (block === 'diagramview-tablegroups') {
+      const wildcard = new vscode.CompletionItem('*', vscode.CompletionItemKind.Value);
+      wildcard.documentation = 'Include all table groups.';
+      return [wildcard, ...this.index.getGroupNames(uri).map((name) => {
+        const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
+        item.documentation = 'Table group';
+        return item;
+      })];
+    }
+
+    // 7e. Inside DiagramView Schemas { } → schema names + wildcard
+    if (block === 'diagramview-schemas') {
+      const wildcard = new vscode.CompletionItem('*', vscode.CompletionItemKind.Value);
+      wildcard.documentation = 'Include all schemas.';
+      return [wildcard, ...this.index.getSchemaNames(uri).map((name) => {
+        const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Module);
+        item.documentation = 'Schema name';
+        return item;
+      })];
+    }
+
+    // 8. Top-level (outside any block): keyword snippets + table names
+    if (block === 'none' && /^\s*\w*$/.test(linePrefix)) {
+      return [
+        ...TOPLEVEL_SNIPPETS.map(({ label, snippet, doc: d }) => {
+          const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Keyword);
+          item.insertText = new vscode.SnippetString(snippet);
+          item.documentation = d;
+          item.sortText = `0_${label}`;
+          return item;
+        }),
+        ...this.tableNameItems(uri),
+      ];
+    }
+
+    return this.tableNameItems(uri);
+  }
+
+  private async includePathItems(doc: vscode.TextDocument): Promise<vscode.CompletionItem[]> {
+    const currentDir = nodePath.dirname(doc.uri.fsPath);
+    const allFiles = await vscode.workspace.findFiles('**/*.dbmlx', '**/node_modules/**');
+    return allFiles
+      .filter(u => u.fsPath !== doc.uri.fsPath)
+      .map(u => {
+        const rel = nodePath.relative(currentDir, u.fsPath).replace(/\\/g, '/');
+        const item = new vscode.CompletionItem(rel, vscode.CompletionItemKind.File);
+        item.insertText = rel;
+        item.detail = vscode.workspace.asRelativePath(u);
+        return item;
+      });
+  }
+
+  private refCompletions(linePrefix: string, uri: vscode.Uri): vscode.CompletionItem[] {
+    // After operator → right-side table.column
+    if (/(?:<>|[<>\-])\s*[\w.]*$/.test(linePrefix)) {
+      return this.tableColumnItems(uri);
+    }
+    // After `word.word` with no operator → operators
+    if (/\w+\.\w*\s*$/.test(linePrefix) && !/(?:<>|[<>\-])/.test(linePrefix)) {
+      return REF_OPERATORS.map(({ label, doc: d }) => {
+        const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Operator);
+        item.documentation = d;
+        return item;
+      });
+    }
+    return this.tableColumnItems(uri);
+  }
+
+  private tableColumnItems(uri: vscode.Uri): vscode.CompletionItem[] {
+    const items: vscode.CompletionItem[] = [];
+    for (const name of this.index.getVisibleTableNames(uri)) {
+      const table = this.index.getTable(name);
+      if (!table) continue;
+      for (const col of table.columns) {
+        const item = new vscode.CompletionItem(
+          `${name}.${col.name}`,
+          vscode.CompletionItemKind.Reference,
+        );
+        item.detail = col.type;
+        items.push(item);
+      }
+    }
+    return items;
+  }
+
+  private tableNameItems(uri: vscode.Uri): vscode.CompletionItem[] {
+    return this.index.getVisibleTableNames(uri).map((name) => {
+      const item = new vscode.CompletionItem(name, vscode.CompletionItemKind.Class);
+      const table = this.index.getTable(name);
+      if (table) item.detail = `${table.columns.length} columns`;
+      return item;
+    });
+  }
+
+  private makeSnippetItem(label: string, snippet: string, doc: string): vscode.CompletionItem {
+    const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Keyword);
+    item.insertText = new vscode.SnippetString(snippet);
+    item.documentation = doc;
+    return item;
+  }
+
+  private makeItem(
+    label: string,
+    doc: string,
+    kind: vscode.CompletionItemKind,
+  ): vscode.CompletionItem {
+    const item = new vscode.CompletionItem(label, kind);
+    item.documentation = doc;
+    return item;
+  }
+}
+
+// ── Registration ───────────────────────────────────────────────────────────
+
+export function registerLspProviders(
+  index: WorkspaceIndex,
+  context: vscode.ExtensionContext,
+): void {
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider('dbmlx', new DbmlxHoverProvider(index)),
+    vscode.languages.registerDocumentSymbolProvider('dbmlx', new DbmlxDocumentSymbolProvider(index)),
+    vscode.languages.registerDefinitionProvider('dbmlx', new DbmlxDefinitionProvider(index)),
+    vscode.languages.registerCompletionItemProvider(
+      'dbmlx',
+      new DbmlxCompletionProvider(index),
+      '.', '[', ',', '"', '!',
+    ),
+    vscode.languages.registerDocumentFormattingEditProvider(
+      'dbmlx',
+      new DbmlxFormattingProvider(),
+    ),
+  );
+}
