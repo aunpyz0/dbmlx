@@ -79,6 +79,10 @@ Table orders {
   email        varchar(255)  [modify: type="varchar(100)"]
   // type change only — omit name= when the column name is unchanged
 
+  user_id      int           [pk, not null, modify: name="uid", pk=false, not_null=false]
+  // constraint changes: column was "uid", non-pk, nullable — now "user_id", pk, not null
+  // before row shows old name/constraints; after row shows new name/constraints
+
   notes        text          [not null, drop]
   // [drop] and [add] combine freely with standard column settings
 }
@@ -90,8 +94,22 @@ Ref: orders.customer_id > customers.id
 Annotation summary:
 - `[add]`  — column is being added; does not exist before migration
 - `[drop]` — column is being removed; will not exist after migration
-- `[modify: name="old_name" type="old_type"]` — column renamed and/or retyped;
-  both `name=` and `type=` are optional (omit whichever didn't change)
+- `[modify: ...]` — column was changed; write the column in its NEW state, record
+  original values inside `modify:`. All keys are optional — omit unchanged ones.
+
+`modify:` keys:
+
+| Key | Format | Records |
+|---|---|---|
+| `name` | `name="old_name"` | column was named this before |
+| `type` | `type="old_type"` | column had this type before |
+| `default` | `default="old_val"` | column had this default value before |
+| `pk` | `pk=true\|false` | pk status before (true = was pk, false = was not pk) |
+| `not_null` | `not_null=true\|false` | not-null status before |
+| `unique` | `unique=true\|false` | unique status before |
+| `increment` | `increment=true\|false` | auto-increment status before |
+
+All `modify:` keys can be combined freely with standard column settings (`pk`, `not null`, `unique`, etc.) in any order.
 
 ---
 

@@ -254,11 +254,17 @@ export function generateSvg(state: AppState): string {
       if (change?.kind === 'modify') {
         const fromName = change.fromName ?? col.name;
         const fromType = change.fromType ?? col.type;
+        const fromPk = change.fromPk ?? col.pk;
+        const fromNotNull = change.fromNotNull ?? col.notNull;
+        const fromUnique = change.fromUnique ?? col.unique;
         L.push(`  <rect x="${x}" y="${ry}" width="${w}" height="${TABLE_ROW_H * 2}" fill="${withAlpha(migModify, 0.08)}"/>`);
         L.push(`  <rect x="${x}" y="${ry}" width="2" height="${TABLE_ROW_H * 2}" fill="${migModify}"/>`);
-        const beforeNameColor = col.pk ? pkColor : fg;
+        const beforeNameColor = fromPk ? pkColor : fg;
         L.push(`  <text x="${x + 8}" y="${ry + 14}" font-family="ui-monospace,monospace,sans-serif" font-size="11" fill="${beforeNameColor}" opacity="0.4" text-decoration="line-through">${esc(fromName)}</text>`);
-        L.push(`  <text x="${x + w - 8}" y="${ry + 14}" font-family="ui-monospace,monospace,sans-serif" font-size="11" fill="${fgMuted}" opacity="0.4" text-anchor="end" text-decoration="line-through">${esc(fromType)}</text>`);
+        let beforeRightX = x + w - 8;
+        if (fromUnique) { L.push(`  <text x="${beforeRightX}" y="${ry + 14}" font-family="ui-monospace,monospace,sans-serif" font-size="9" fill="${fgMuted}" opacity="0.4" text-anchor="end" text-decoration="line-through">U</text>`); beforeRightX -= 14; }
+        if (fromNotNull) { L.push(`  <text x="${beforeRightX}" y="${ry + 14}" font-family="ui-monospace,monospace,sans-serif" font-size="9" fill="${fgMuted}" opacity="0.4" text-anchor="end" text-decoration="line-through">NN</text>`); beforeRightX -= 20; }
+        L.push(`  <text x="${beforeRightX}" y="${ry + 14}" font-family="ui-monospace,monospace,sans-serif" font-size="11" fill="${fgMuted}" opacity="0.4" text-anchor="end" text-decoration="line-through">${esc(fromType)}</text>`);
         L.push(`  <line x1="${x + 6}" y1="${ry + TABLE_ROW_H}" x2="${x + w}" y2="${ry + TABLE_ROW_H}" stroke="${withAlpha(migModify, 0.25)}" stroke-width="1"/>`);
         const afterNameColor = col.pk ? pkColor : migModify;
         L.push(`  <text x="${x + 8}" y="${ry + TABLE_ROW_H + 14}" font-family="ui-monospace,monospace,sans-serif" font-size="11" font-weight="600" fill="${afterNameColor}">${esc(col.name)}</text>`);

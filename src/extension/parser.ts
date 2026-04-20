@@ -124,10 +124,19 @@ function extractMigrationChanges(source: string): {
           const body = modifyMatch[1]!;
           const fromName = /\bname\s*=\s*"([^"]*)"/.exec(body)?.[1];
           const fromType = /\btype\s*=\s*"([^"]*)"/.exec(body)?.[1];
-          tableChanges.set(colName, { kind: 'modify', fromName, fromType });
+          const parseBool = (key: string) => { const m = new RegExp(`\\b${key}\\s*=\\s*(true|false)\\b`).exec(body); return m ? m[1] === 'true' : undefined; };
+          const fromPk = parseBool('pk');
+          const fromNotNull = parseBool('not_null');
+          const fromUnique = parseBool('unique');
+          const fromDefault = /\bdefault\s*=\s*"([^"]*)"/.exec(body)?.[1];
+          const fromIncrement = parseBool('increment');
+          tableChanges.set(colName, { kind: 'modify', fromName, fromType, fromPk, fromNotNull, fromUnique, fromDefault, fromIncrement });
+          // Strip modify: and all its key=value pairs (quoted strings or booleans), preserving other settings
           processedLine = line.replace(/\[([^\]]*)\]/, (_m, inner: string) => {
+            const KV = /\w+\s*=\s*(?:"[^"]*"|true|false)/;
+            const NEXT_KV = /(?=\w+\s*=\s*(?:"|true|false))/;
             const cleaned = inner
-              .replace(/\s*\bmodify:\s*(?:\w+\s*=\s*"[^"]*"(?:\s*,\s*(?=\w+\s*=\s*"))?)*\s*/gi, '')
+              .replace(new RegExp(`\\s*\\bmodify:\\s*(?:${KV.source}(?:\\s*,\\s*${NEXT_KV.source})?)*\\s*`, 'gi'), '')
               .replace(/,\s*,/g, ',')
               .replace(/^\s*,\s*/, '').replace(/\s*,\s*$/, '')
               .trim();

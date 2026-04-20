@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { parseDbmlx } from './parser';
-import type { ParseError, QualifiedName, Ref, Schema, Table, TableGroup } from '../shared/types';
+import type { ParseError, QualifiedName, Schema } from '../shared/types';
 
 export interface SymbolLocation {
   uri: vscode.Uri;
@@ -57,55 +57,98 @@ export class WorkspaceIndex implements vscode.Disposable {
   public readonly onChange: vscode.Event<vscode.Uri> = this._onChange.event;
   private readonly disposables: vscode.Disposable[] = [this._onChange];
 
-  // ── Lifecycle ───────────────────────────────��────────────────────────────
+  private readonly _diagCollection = vscode.languages.createDiagnosticCollection('dbmlx');
+  private _typingTimer: ReturnType<typeof setTimeout> | null = null;
+  // Serialise all rebuild calls so concurrent FS/save/typing events never
+  // interleave a roots.clear() with a consumer reading roots.
+  private _rebuildChain: Promise<void> = Promise.resolve();
+
+  // ── Lifecycle ────────────────────────────────────────────────────────────
 
   static async create(context: vscode.ExtensionContext): Promise<WorkspaceIndex> {
     const idx = new WorkspaceIndex();
-    await idx.init();
+    await idx.init(context);
     context.subscriptions.push(idx);
     return idx;
   }
 
-  private async init(): Promise<void> {
+  private async init(context: vscode.ExtensionContext): Promise<void> {
+    context.subscriptions.push(this._diagCollection);
+
     const uris = await vscode.workspace.findFiles('**/*.dbmlx', '**/node_modules/**');
     await Promise.all(uris.map((u) => this.scanFile(u)));
-    await this.rebuildRoots();
-    this.rebuildLocationTable();
+    await this.rebuild(undefined);
 
     const watcher = vscode.workspace.createFileSystemWatcher('**/*.dbmlx');
-    const onChange = async (u: vscode.Uri) => {
+    watcher.onDidChange(async (u) => {
+      // Skip if this URI was already synced from the in-memory document (save
+      // event) — getText() is authoritative; avoid an extra disk read race.
       await this.scanFile(u);
-      await this.rebuildRoots();
-      this.rebuildLocationTable();
-      this._onChange.fire(u);
-    };
-    watcher.onDidChange(onChange);
-    watcher.onDidCreate(onChange);
+      await this.rebuild(u);
+    });
+    watcher.onDidCreate(async (u) => {
+      await this.scanFile(u);
+      await this.rebuild(u);
+    });
     watcher.onDidDelete(async (u) => {
       this.raw.delete(u.toString());
-      await this.rebuildRoots();
-      this.rebuildLocationTable();
-      this._onChange.fire(u);
+      await this.rebuild(u);
     });
     this.disposables.push(watcher);
 
-    // Also trigger on document save — more reliable than the FS watcher on macOS.
+    // Authoritative save trigger: uses in-memory text (doc.getText()), avoiding
+    // macOS FS-watcher timing issues where the file may not be on disk yet.
     this.disposables.push(
       vscode.workspace.onDidSaveTextDocument(async (doc) => {
         if (!doc.uri.fsPath.endsWith('.dbmlx')) return;
-        const source = doc.getText();
-        const includes = extractIncludes(source, doc.uri);
-        this.raw.set(doc.uri.toString(), { uri: doc.uri, source, includes });
-        await this.rebuildRoots();
-        this.rebuildLocationTable();
-        this._onChange.fire(doc.uri);
+        this.applyInMemory(doc);
+        await this.rebuild(doc.uri);
+      }),
+    );
+
+    // Live typing: update diagnostics as the user types (debounced 400 ms).
+    this.disposables.push(
+      vscode.workspace.onDidChangeTextDocument((e) => {
+        if (!e.document.uri.fsPath.endsWith('.dbmlx')) return;
+        if (e.contentChanges.length === 0) return;
+        if (this._typingTimer) clearTimeout(this._typingTimer);
+        this._typingTimer = setTimeout(() => {
+          this._typingTimer = null;
+          const doc = e.document;
+          this.applyInMemory(doc);
+          void this.rebuild(doc.uri);
+        }, 400);
       }),
     );
   }
 
   public dispose(): void {
+    if (this._typingTimer) { clearTimeout(this._typingTimer); this._typingTimer = null; }
     for (const d of this.disposables) d.dispose();
     this.disposables.length = 0;
+  }
+
+  /** Apply in-memory document text to raw without reading from disk. */
+  private applyInMemory(doc: vscode.TextDocument): void {
+    const source = doc.getText();
+    const includes = extractIncludes(source, doc.uri);
+    this.raw.set(doc.uri.toString(), { uri: doc.uri, source, includes });
+  }
+
+  /**
+   * Serialised rebuild: queues a rebuild so concurrent triggers (FS watcher +
+   * save + typing) never interleave a roots.clear() with a consumer reading roots.
+   */
+  private async rebuild(changedUri: vscode.Uri | undefined): Promise<void> {
+    this._rebuildChain = this._rebuildChain.then(() => this._doRebuild(changedUri));
+    return this._rebuildChain;
+  }
+
+  private async _doRebuild(changedUri: vscode.Uri | undefined): Promise<void> {
+    await this.rebuildRoots();
+    this.rebuildLocationTable();
+    this._refreshDiagnostics();
+    if (changedUri) this._onChange.fire(changedUri);
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
@@ -318,6 +361,29 @@ export class WorkspaceIndex implements vscode.Disposable {
           errorLocalLine,
         });
       }
+    }
+  }
+
+  /** Update the VSCode diagnostic collection to match the current roots state. */
+  private _refreshDiagnostics(): void {
+    this._diagCollection.clear();
+    for (const root of this.roots.values()) {
+      if (!root.error || !root.errorUri) continue;
+      const localLine = root.errorLocalLine ?? root.error.line;
+      const col = root.error.column ?? 1;
+      const message =
+        localLine != null && root.error.line != null
+          ? root.error.message.replace(`(line ${root.error.line})`, `(line ${localLine})`)
+          : root.error.message;
+      const range = new vscode.Range(
+        Math.max(0, (localLine ?? 1) - 1),
+        Math.max(0, col - 1),
+        Math.max(0, (localLine ?? 1) - 1),
+        Math.max(0, col),
+      );
+      const diag = new vscode.Diagnostic(range, message, vscode.DiagnosticSeverity.Error);
+      diag.source = 'dbmlx';
+      this._diagCollection.set(root.errorUri, [diag]);
     }
   }
 

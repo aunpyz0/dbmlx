@@ -188,18 +188,21 @@ function ColumnRow({ col, isFk, change }: { col: Column; isFk: boolean; change?:
   if (change?.kind === 'modify') {
     const fromName = change.fromName ?? col.name;
     const fromType = change.fromType ?? col.type;
+    const fromPk = change.fromPk ?? col.pk;
+    const fromNotNull = change.fromNotNull ?? col.notNull;
+    const fromUnique = change.fromUnique ?? col.unique;
     return (
       <li class={`ddd-table__col${isFk ? ' is-fk' : ''}${changeClass}`} onMouseEnter={onEnter} onMouseLeave={onLeave}>
         <div class="ddd-col__before">
           <span class="ddd-table__col-left">
-            <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>{fromName}</span>
-            {col.pk ? <IconKey size={10} /> : null}
+            <span class={`ddd-table__col-name${fromPk ? ' is-pk' : ''}`}>{fromName}</span>
+            {fromPk ? <IconKey size={10} /> : null}
             {col.note ? <IconNote size={10} /> : null}
           </span>
           <span class="ddd-table__col-right">
             <span class="ddd-table__col-type">{fromType}</span>
-            {col.notNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}
-            {col.unique ? <span class="ddd-table__badge" title="unique">U</span> : null}
+            {fromNotNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}
+            {fromUnique ? <span class="ddd-table__badge" title="unique">U</span> : null}
           </span>
         </div>
         <div class="ddd-col__after">

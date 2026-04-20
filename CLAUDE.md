@@ -8,6 +8,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The `.dbmlx` language is a superset of DBML: all standard DBML syntax is valid, plus `!include`, `DiagramView`, and migration diff annotations (`[add]`, `[drop]`, `[modify: ...]`).
 
+Migration diff annotations — write column in its **new** state, record old values in the annotation:
+- `[add]` — column is new (green accent)
+- `[drop]` — column is removed (red strikethrough)
+- `[modify: key=value, ...]` — column was changed; before/after diff rendered in amber
+
+`modify:` keys (all optional, any order, combine freely with standard settings like `[pk, not null, modify: ...]`):
+
+| Key | Format | Meaning |
+|---|---|---|
+| `name` | `name="old"` | column was named this before |
+| `type` | `type="old"` | column had this type before |
+| `default` | `default="old"` | column had this default before |
+| `pk` | `pk=true\|false` | pk status before the change |
+| `not_null` | `not_null=true\|false` | not-null status before |
+| `unique` | `unique=true\|false` | unique status before |
+| `increment` | `increment=true\|false` | auto-increment status before |
+
 Key differentiators over existing extensions:
 - Layout persisted in a sidecar `<name>.dbmlx.layout.json` with stable-ordered JSON (Git-friendly diffs)
 - `TableGroup` collapse to single box-node + hide

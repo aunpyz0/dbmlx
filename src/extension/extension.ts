@@ -1,14 +1,11 @@
 import * as vscode from 'vscode';
 import { DiagramPanel } from './panel';
 import { WorkspaceIndex } from './workspaceIndex';
-import { DiagnosticsProvider } from './diagnosticsProvider';
 import { registerLspProviders } from './lspProviders';
 import { registerSqlConverterCommands } from './sqlConverter';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const index = await WorkspaceIndex.create(context);
-  const _diagnostics = new DiagnosticsProvider(index);
-  context.subscriptions.push(_diagnostics);
   registerLspProviders(index, context);
   registerSqlConverterCommands(index, context);
 

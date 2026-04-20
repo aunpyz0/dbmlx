@@ -215,6 +215,11 @@ class DbmlxHoverProvider implements vscode.HoverProvider {
         col.increment ? 'AUTOINCREMENT' : '',
         change?.kind === 'modify' && change.fromName ? `was \`${change.fromName}\`` : '',
         change?.kind === 'modify' && change.fromType ? `was \`${change.fromType}\`` : '',
+        change?.kind === 'modify' && change.fromPk !== undefined ? (change.fromPk ? 'was pk' : 'pk added') : '',
+        change?.kind === 'modify' && change.fromNotNull !== undefined ? (change.fromNotNull ? 'was not null' : 'not null added') : '',
+        change?.kind === 'modify' && change.fromUnique !== undefined ? (change.fromUnique ? 'was unique' : 'unique added') : '',
+        change?.kind === 'modify' && change.fromDefault !== undefined ? `default was \`${change.fromDefault}\`` : '',
+        change?.kind === 'modify' && change.fromIncrement !== undefined ? (change.fromIncrement ? 'was autoincrement' : 'autoincrement added') : '',
       ].filter(Boolean).join(', ');
       md.appendMarkdown(`| \`${col.name}\`${diffBadge} | \`${col.type}\` | ${constraints} |\n`);
     }
@@ -353,7 +358,7 @@ const COLUMN_SETTINGS: Array<{ label: string; doc: string; kind?: vscode.Complet
   { label: 'ref: ', doc: 'Inline foreign-key reference.', kind: vscode.CompletionItemKind.Reference },
   { label: 'add', doc: 'Migration diff — column is being added in this migration.', kind: vscode.CompletionItemKind.EnumMember },
   { label: 'drop', doc: 'Migration diff — column is being dropped in this migration.', kind: vscode.CompletionItemKind.EnumMember },
-  { label: 'modify: ', doc: 'Migration diff — column is being modified. Write the new column name/type on the line; use name="old_name" and type="old_type" to record the original values.', kind: vscode.CompletionItemKind.EnumMember, snippet: 'modify: ${1|name,type|}="$2"' },
+  { label: 'modify: ', doc: 'Migration diff — column is being modified. Use name="old", type="old", default="old" for value changes; pk=true/false, not_null=true/false, unique=true/false, increment=true/false to record constraint changes.', kind: vscode.CompletionItemKind.EnumMember, snippet: 'modify: ${1|name,type,default,pk,not_null,unique,increment|}=${2|"$3",true,false|}' },
 ];
 
 const INDEX_SETTINGS: Array<{ label: string; doc: string; kind?: vscode.CompletionItemKind }> = [

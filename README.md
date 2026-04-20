@@ -61,15 +61,31 @@ Annotate columns to visualize a schema migration as a before/after diff directly
 Table orders {
   id           int           [pk]
   status       varchar(50)
-  amount       decimal(10,2) [add]                                    // new column
-  total        decimal       [drop]                                   // removed column
+  amount       decimal(10,2) [add]                                           // new column
+  total        decimal       [drop]                                          // removed column
   customer_id  int           [modify: name="customer", type="varchar(100)"]  // renamed + retyped
+  user_id      int           [pk, not null, modify: name="uid", pk=false, not_null=false]
+  // ↑ was "uid", non-pk, nullable → now "user_id", pk, not null
 }
 ```
 
 - `[add]` — rendered with a green accent
 - `[drop]` — rendered with a red strikethrough
-- `[modify: name="old_name" type="old_type"]` — two-row display: original (strikethrough) → new (amber). Refs and indexes reference the new column name.
+- `[modify: ...]` — two-row display: original (strikethrough) → new (amber). All keys are optional.
+
+`modify:` keys — write the column in its new state, record old values in the annotation:
+
+| Key | Format | Records |
+|---|---|---|
+| `name` | `name="old"` | previous column name |
+| `type` | `type="old"` | previous column type |
+| `default` | `default="old"` | previous default value |
+| `pk` | `pk=true\|false` | pk status before the change |
+| `not_null` | `not_null=true\|false` | not-null status before |
+| `unique` | `unique=true\|false` | unique status before |
+| `increment` | `increment=true\|false` | auto-increment status before |
+
+All `modify:` keys combine freely with standard column settings in any order: `[pk, not null, modify: name="old", pk=false]`.
 
 ---
 

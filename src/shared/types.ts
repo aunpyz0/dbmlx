@@ -14,6 +14,16 @@ export interface ColumnChange {
   fromName?: string;
   /** For 'modify': original column type before migration (undefined = type unchanged) */
   fromType?: string;
+  /** For 'modify': pk status before migration (undefined = unchanged) */
+  fromPk?: boolean;
+  /** For 'modify': not-null status before migration (undefined = unchanged) */
+  fromNotNull?: boolean;
+  /** For 'modify': unique status before migration (undefined = unchanged) */
+  fromUnique?: boolean;
+  /** For 'modify': default value before migration (undefined = unchanged) */
+  fromDefault?: string;
+  /** For 'modify': auto-increment status before migration (undefined = unchanged) */
+  fromIncrement?: boolean;
 }
 
 export interface Column {

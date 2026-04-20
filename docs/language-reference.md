@@ -238,6 +238,14 @@ Table orders {
   email        varchar(255)  [modify: type="varchar(100)"]
   // ↑ type change only — name= omitted because name is unchanged
 
+  user_id      int           [pk, not null, modify: name="uid", pk=false, not_null=false]
+  // ↑ constraint changes: was "uid", non-pk, nullable → now "user_id", pk, not null
+  //   before row shows old name + no PK icon + no NN badge
+  //   after row shows new name + PK icon + NN badge
+
+  score        float         [modify: default="0.0", unique=true]
+  // ↑ default removed, unique constraint dropped
+
   description  text          [not null, drop]
   // ↑ [drop] combines with other standard settings
 }
@@ -246,13 +254,31 @@ Table orders {
 Ref: orders.customer_id > customers.id
 ```
 
+### `[modify:]` keys
+
+All keys are optional. Omit any key whose value did not change. Keys can appear in any order and combine freely with standard column settings (`pk`, `not null`, `unique`, etc.).
+
+| Key | Format | Records |
+|---|---|---|
+| `name` | `name="old_name"` | column name before the migration |
+| `type` | `type="old_type"` | column type before the migration |
+| `default` | `default="old_val"` | default value before the migration |
+| `pk` | `pk=true\|false` | pk status before (`true` = was pk, `false` = was not pk) |
+| `not_null` | `not_null=true\|false` | not-null status before |
+| `unique` | `unique=true\|false` | unique status before |
+| `increment` | `increment=true\|false` | auto-increment status before |
+
+The before/after diff display uses these values:
+- **Before row** (strikethrough): old name, old type, icons/badges from old pk/not_null/unique. Falls back to current column values for any key not specified.
+- **After row** (amber): current column name, type, and settings as written on the line.
+
 ### Rules
 
 | Annotation | Meaning | Visual |
 |---|---|---|
 | `[add]` | Column being added. Does not exist before migration. | Green accent |
 | `[drop]` | Column being removed. Will not exist after migration. | Red strikethrough |
-| `[modify: name="old" type="old"]` | Column renamed and/or retyped. Write new state on the line; `name=` and `type=` record original values. Both are optional. | Two-row display: original (muted strikethrough) → new (amber) |
+| `[modify: ...]` | Column was changed. Write new state on the line; record old values inside `modify:`. | Two-row display: original (muted strikethrough) → new (amber) |
 
 - Annotations are stripped before passing to the underlying DBML parser — they never cause parse errors.
 - `[add]` and `[drop]` can be combined with standard column settings: `[not null, add]`, `[pk, drop]`.
