@@ -191,7 +191,11 @@ function ColumnRow({ col, isFk, change }: { col: Column; isFk: boolean; change?:
     return (
       <li class={`ddd-table__col${isFk ? ' is-fk' : ''}${changeClass}`} onMouseEnter={onEnter} onMouseLeave={onLeave}>
         <div class="ddd-col__before">
-          <span class="ddd-table__col-left"><span class="ddd-table__col-name">{fromName}</span></span>
+          <span class="ddd-table__col-left">
+            <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>{fromName}</span>
+            {col.pk ? <IconKey size={10} /> : null}
+            {col.note ? <IconNote size={10} /> : null}
+          </span>
           <span class="ddd-table__col-right">
             <span class="ddd-table__col-type">{fromType}</span>
             {col.notNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}
@@ -199,7 +203,11 @@ function ColumnRow({ col, isFk, change }: { col: Column; isFk: boolean; change?:
           </span>
         </div>
         <div class="ddd-col__after">
-          <span class="ddd-table__col-left"><span class="ddd-table__col-name">{col.name}</span></span>
+          <span class="ddd-table__col-left">
+            <span class={`ddd-table__col-name${col.pk ? ' is-pk' : ''}`}>{col.name}</span>
+            {col.pk ? <IconKey size={10} /> : null}
+            {col.note ? <IconNote size={10} /> : null}
+          </span>
           <span class="ddd-table__col-right">
             <span class="ddd-table__col-type">{col.type}</span>
             {col.notNull ? <span class="ddd-table__badge" title="not null">NN</span> : null}

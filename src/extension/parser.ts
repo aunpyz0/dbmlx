@@ -125,7 +125,14 @@ function extractMigrationChanges(source: string): {
           const fromName = /\bname\s*=\s*"([^"]*)"/.exec(body)?.[1];
           const fromType = /\btype\s*=\s*"([^"]*)"/.exec(body)?.[1];
           tableChanges.set(colName, { kind: 'modify', fromName, fromType });
-          processedLine = line.replace(/,?\s*modify:\s*[^\]]*/i, '').trimEnd();
+          processedLine = line.replace(/\[([^\]]*)\]/, (_m, inner: string) => {
+            const cleaned = inner
+              .replace(/\s*\bmodify:\s*(?:\w+\s*=\s*"[^"]*"(?:\s*,\s*(?=\w+\s*=\s*"))?)*\s*/gi, '')
+              .replace(/,\s*,/g, ',')
+              .replace(/^\s*,\s*/, '').replace(/\s*,\s*$/, '')
+              .trim();
+            return cleaned ? `[${cleaned}]` : '';
+          }).trimEnd();
           outLines.push(processedLine);
           continue;
         }
