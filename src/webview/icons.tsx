@@ -138,3 +138,8 @@ export const IconLayoutCompact = (p?: IconProps) => wrap(
   'M1 1h4v4H1V1zm5 0h4v4H6V1zm5 0h4v4h-4V1zM1 6h4v4H1V6zm5 0h4v4H6V6zm5 0h4v4h-4V6zM1 11h4v4H1v-4zm5 0h4v4H6v-4zm5 0h4v4h-4v-4z',
   p,
 );
+
+export const IconFocus = (p?: IconProps) => wrap(
+  'M2 2h4v1H3v3H2V2zm10 0h2v4h-1V3h-3V2h2zm0 12h1v-3h1v4h-4v-1h2zm-10 0h3v1H2v-4h1v3zm6-8a2 2 0 1 1 0 4 2 2 0 0 1 0-4z',
+  p,
+);

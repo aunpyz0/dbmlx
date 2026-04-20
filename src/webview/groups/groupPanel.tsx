@@ -11,9 +11,11 @@ import {
   IconExpandAll,
   IconEye,
   IconEyeClosed,
+  IconFocus,
   IconSearch,
   IconSettings,
 } from '../icons';
+import { focusTable } from '../render/viewport';
 
 export function GroupPanel() {
   const groups = useAppStore((s) => s.schema.groups);
@@ -262,12 +264,13 @@ function TableRow({ tableName, hidden }: { tableName: string; hidden: boolean })
   };
   return (
     <li class="ddd-table-row">
-      <span class="ddd-table-row__name" title={tableName}>{shortName}</span>
+      <button class="ddd-table-row__name" title={`Focus ${tableName}`} onClick={() => focusTable(tableName)}>{shortName}</button>
       <button
         class={`ddd-icon-btn ${hidden ? 'is-off' : ''}`}
         onClick={toggle}
         title={hidden ? 'Show table' : 'Hide table'}
       >{hidden ? <IconEyeClosed size={11} /> : <IconEye size={11} />}</button>
+      <button class="ddd-icon-btn ddd-focus-btn" title={`Focus ${tableName}`} onClick={() => focusTable(tableName)}><IconFocus size={11} /></button>
     </li>
   );
 }

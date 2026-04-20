@@ -7,7 +7,7 @@ import { CollapsedGroupNode } from './render/collapsedGroupNode';
 import { GroupContainer } from './render/groupContainer';
 import { ZoomButtons } from './render/zoomButtons';
 import { ActionsPanel } from './render/actionsPanel';
-import { panBy, zoomAt } from './render/viewport';
+import { panBy, registerViewportEl, zoomAt } from './render/viewport';
 import { undoLastDrag } from './drag/dragController';
 import { SpatialIndex } from './render/spatialIndex';
 import { lodForZoom } from './render/lod';
@@ -222,6 +222,11 @@ export function App(_props: AppProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const [viewportRect, setViewportRect] = useState({ w: 0, h: 0 });
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+
+  useEffect(() => {
+    registerViewportEl(viewportRef.current);
+    return () => registerViewportEl(null);
+  }, []);
 
   useEffect(() => {
     const el = viewportRef.current;

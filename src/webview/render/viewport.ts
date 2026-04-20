@@ -1,5 +1,13 @@
 import { store } from '../state/store';
-import { estimateSize } from '../layout/autoLayout';
+import { estimateSize, tableActualHeight } from '../layout/autoLayout';
+import { schedulePersist } from '../drag/dragController';
+import type { QualifiedName } from '../../shared/types';
+
+let _viewportEl: HTMLElement | null = null;
+
+export function registerViewportEl(el: HTMLElement | null): void {
+  _viewportEl = el;
+}
 
 export interface Point { x: number; y: number }
 
@@ -70,6 +78,43 @@ export function fitToContent(viewportEl: HTMLElement, padding = 48): void {
   const x = rect.width / 2 - cx * zoom;
   const y = rect.height / 2 - cy * zoom;
   store.getState().setViewport({ x, y, zoom });
+}
+
+export function focusTable(name: QualifiedName): void {
+  const state = store.getState();
+  const pos = state.positions.get(name);
+  if (!pos) return;
+
+  const table = state.schema.tables.find((t) => t.name === name);
+  const w = estimateSize(table?.columns.length ?? 0).width;
+  const h = table ? tableActualHeight(table) : estimateSize(0).height;
+
+  // Un-hide the table if it's individually hidden.
+  if (state.hiddenTables.has(name)) {
+    state.setTableHidden(name, false);
+    schedulePersist();
+  }
+  // Un-hide / un-collapse the group if this table belongs to one.
+  if (table?.groupName) {
+    const gs = state.groups[table.groupName];
+    if (gs?.hidden) {
+      state.setGroup(table.groupName, { hidden: false });
+      schedulePersist();
+    }
+    if (gs?.collapsed) {
+      state.setGroup(table.groupName, { collapsed: false });
+      schedulePersist();
+    }
+  }
+
+  const el = _viewportEl;
+  const vw = el ? el.getBoundingClientRect().width : window.innerWidth;
+  const vh = el ? el.getBoundingClientRect().height : window.innerHeight;
+
+  const zoom = clamp(state.viewport.zoom, 0.5, 2);
+  const cx = pos.x + w / 2;
+  const cy = pos.y + h / 2;
+  state.setViewport({ x: vw / 2 - cx * zoom, y: vh / 2 - cy * zoom, zoom });
 }
 
 function clamp(v: number, lo: number, hi: number): number {
