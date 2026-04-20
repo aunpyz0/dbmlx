@@ -635,6 +635,11 @@ class DbmlxCompletionProvider implements vscode.CompletionItemProvider {
       ];
     }
 
+    // Typing `Ref <name>` before the colon — don't suggest anything
+    if (/^\s*[Rr]ef\b/.test(linePrefix) && !/:/.test(linePrefix)) {
+      return [];
+    }
+
     return this.tableNameItems(uri);
   }
 

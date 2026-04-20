@@ -88,6 +88,19 @@ export class WorkspaceIndex implements vscode.Disposable {
       this._onChange.fire(u);
     });
     this.disposables.push(watcher);
+
+    // Also trigger on document save — more reliable than the FS watcher on macOS.
+    this.disposables.push(
+      vscode.workspace.onDidSaveTextDocument(async (doc) => {
+        if (!doc.uri.fsPath.endsWith('.dbmlx')) return;
+        const source = doc.getText();
+        const includes = extractIncludes(source, doc.uri);
+        this.raw.set(doc.uri.toString(), { uri: doc.uri, source, includes });
+        await this.rebuildRoots();
+        this.rebuildLocationTable();
+        this._onChange.fire(doc.uri);
+      }),
+    );
   }
 
   public dispose(): void {
