@@ -91,7 +91,7 @@ function extractMigrationChanges(source: string): {
   let currentTableRawName = '';
 
   const TABLE_OPEN_RE = /^\s*[Tt]able\s+([\w"`.]+(?:\.[\w"`.]+)?)/;
-  const COL_NAME_RE = /^\s+(\w+)\s/;
+  const COL_NAME_RE = /^\s+(?:"([^"]+)"|(\w+))\s/;
   const MODIFY_RE = /\[modify:\s*([^\]]*)\]/i;
 
   for (const line of lines) {
@@ -101,7 +101,7 @@ function extractMigrationChanges(source: string): {
 
     const tableMatch = TABLE_OPEN_RE.exec(line);
     if (tableMatch && !inTable) {
-      const raw = tableMatch[1]!.replace(/["`.]/g, '');
+      const raw = tableMatch[1]!.replace(/["` ]/g, '');
       currentTableRawName = raw.includes('.') ? raw.split('.').pop()! : raw;
       inTable = true;
       tableBodyDepth = braceDepth + opens;
@@ -115,7 +115,8 @@ function extractMigrationChanges(source: string): {
     if (inTable && braceDepth === tableBodyDepth) {
       const tableChanges = changes.get(currentTableRawName)!;
 
-      const colName = COL_NAME_RE.exec(line)?.[1];
+      const colMatch = COL_NAME_RE.exec(line);
+      const colName = colMatch ? (colMatch[1] ?? colMatch[2]) : undefined;
       if (colName) {
         // [modify: name="x", type="y"]
         const modifyMatch = MODIFY_RE.exec(line);
